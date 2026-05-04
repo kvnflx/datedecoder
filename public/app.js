@@ -1,0 +1,224 @@
+const state = {
+  messages: [],
+  isStreaming: false
+};
+
+const $ = (sel) => document.querySelector(sel);
+
+document.addEventListener('DOMContentLoaded', () => {
+  $('#input-text').addEventListener('input', updateAnalyzeBtn);
+  $('#btn-analyze').addEventListener('click', startAnalysis);
+  $('#btn-screenshot').addEventListener('click', () => $('#file-input').click());
+  $('#file-input').addEventListener('change', handleFileSelect);
+  $('#btn-send').addEventListener('click', sendFollowUp);
+  $('#chat-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) sendFollowUp();
+  });
+  $('#btn-new').addEventListener('click', resetToInput);
+});
+
+function updateAnalyzeBtn() {
+  $('#btn-analyze').disabled = !$('#input-text').value.trim();
+}
+
+// ── Analysis Flow ──
+
+async function startAnalysis() {
+  const text = $('#input-text').value.trim();
+  if (!text || state.isStreaming) return;
+
+  state.messages = [{ role: 'user', content: text }];
+  switchMode('chat');
+  addUserMessage(text);
+
+  const contentEl = addAssistantMessage();
+
+  try {
+    const content = await streamResponse(state.messages, contentEl);
+    state.messages.push({ role: 'assistant', content });
+    makeCollapsible(contentEl);
+  } catch (err) {
+    contentEl.textContent = err.message;
+    contentEl.classList.add('error');
+  }
+}
+
+async function sendFollowUp() {
+  const input = $('#chat-input');
+  const text = input.value.trim();
+  if (!text || state.isStreaming) return;
+
+  input.value = '';
+  state.messages.push({ role: 'user', content: text });
+  addUserMessage(text);
+
+  const contentEl = addAssistantMessage();
+
+  try {
+    const content = await streamResponse(state.messages, contentEl);
+    state.messages.push({ role: 'assistant', content });
+  } catch (err) {
+    contentEl.textContent = err.message;
+    contentEl.classList.add('error');
+  }
+}
+
+// ── SSE Streaming ──
+
+async function streamResponse(messages, targetEl) {
+  state.isStreaming = true;
+  setInputsDisabled(true);
+
+  try {
+    const response = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages })
+    });
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || 'Unbekannter Fehler');
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let fullContent = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data: ')) continue;
+        const data = trimmed.slice(6);
+        if (data === '[DONE]') {
+          targetEl.innerHTML = formatText(fullContent);
+          return fullContent;
+        }
+        try {
+          const parsed = JSON.parse(data);
+          const token = parsed.choices?.[0]?.delta?.content || '';
+          fullContent += token;
+          targetEl.innerHTML = formatText(fullContent) + '<span class="cursor">▌</span>';
+          scrollToBottom();
+        } catch (e) {
+          // skip unparseable SSE lines
+        }
+      }
+    }
+
+    targetEl.innerHTML = formatText(fullContent);
+    return fullContent;
+  } finally {
+    state.isStreaming = false;
+    setInputsDisabled(false);
+  }
+}
+
+// ── UI Helpers ──
+
+function switchMode(mode) {
+  $('#app').className = 'mode-' + mode;
+}
+
+function addUserMessage(text) {
+  const div = document.createElement('div');
+  div.className = 'message user-message';
+  div.textContent = text;
+  $('#messages').appendChild(div);
+  scrollToBottom();
+  return div;
+}
+
+function addAssistantMessage() {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'message assistant-message';
+
+  const label = document.createElement('div');
+  label.className = 'message-label';
+  label.textContent = 'ANALYSE';
+
+  const content = document.createElement('div');
+  content.className = 'message-content';
+
+  wrapper.appendChild(label);
+  wrapper.appendChild(content);
+  $('#messages').appendChild(wrapper);
+  scrollToBottom();
+  return content;
+}
+
+function makeCollapsible(contentEl) {
+  const wrapper = contentEl.parentElement;
+  const toggle = document.createElement('div');
+  toggle.className = 'collapse-toggle';
+  toggle.textContent = 'Analyse einklappen ▲';
+  toggle.addEventListener('click', () => {
+    wrapper.classList.toggle('collapsed');
+    toggle.textContent = wrapper.classList.contains('collapsed')
+      ? 'Analyse anzeigen ▼'
+      : 'Analyse einklappen ▲';
+  });
+  wrapper.insertBefore(toggle, contentEl);
+}
+
+function formatText(text) {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\n/g, '<br>')
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+}
+
+function scrollToBottom() {
+  const el = $('#messages');
+  el.scrollTop = el.scrollHeight;
+}
+
+function setInputsDisabled(disabled) {
+  $('#btn-send').disabled = disabled;
+  $('#chat-input').disabled = disabled;
+  $('#btn-analyze').disabled = disabled;
+}
+
+function resetToInput() {
+  state.messages = [];
+  $('#messages').innerHTML = '';
+  $('#input-text').value = '';
+  updateAnalyzeBtn();
+  switchMode('input');
+}
+
+// ── Screenshot OCR ──
+
+async function handleFileSelect(e) {
+  const file = e.target.files?.[0];
+  if (!file) return;
+
+  const textarea = $('#input-text');
+  const btn = $('#btn-screenshot');
+  const original = btn.textContent;
+  btn.textContent = '⏳ Wird erkannt...';
+  btn.disabled = true;
+
+  try {
+    const { data: { text } } = await Tesseract.recognize(file, 'deu+eng');
+    textarea.value = text.trim();
+    updateAnalyzeBtn();
+  } catch (err) {
+    textarea.value = '';
+    textarea.placeholder = 'Text konnte nicht erkannt werden. Versuch’s mit einem klareren Screenshot oder tippe den Text ab.';
+  } finally {
+    btn.textContent = original;
+    btn.disabled = false;
+    e.target.value = '';
+  }
+}
