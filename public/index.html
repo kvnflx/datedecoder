@@ -2,10 +2,45 @@
 <html lang="de">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>DECODED</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0d0d0d">
+  <title>DECODED — Nachrichten entschlüsseln</title>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <h1>DECODED</h1>
+  <div id="app" class="mode-input">
+
+    <!-- Landing / Input Mode -->
+    <div id="landing">
+      <div class="logo">⚡ DECODED</div>
+      <p class="tagline">Nachrichten entschlüsseln. Signale erkennen. Klarheit gewinnen.</p>
+      <div class="input-box">
+        <textarea id="input-text" placeholder="Paste den Chatverlauf oder beschreibe die Situation..."></textarea>
+        <div class="input-actions">
+          <button id="btn-screenshot" class="btn-secondary">📷 Screenshot</button>
+          <button id="btn-analyze" class="btn-primary" disabled>Analysieren ⚡</button>
+        </div>
+      </div>
+      <p class="hints">Beispiele: "Sie hat geschrieben..." · "Er meinte dann..." · Screenshot von WhatsApp</p>
+    </div>
+
+    <!-- Chat Mode -->
+    <div id="chat">
+      <div class="chat-header">
+        <div class="logo-small">⚡ DECODED</div>
+        <button id="btn-new" class="btn-new">Neue Analyse</button>
+      </div>
+      <div id="messages"></div>
+      <div class="chat-input-bar">
+        <input id="chat-input" type="text" placeholder="Nachricht...">
+        <button id="btn-send">→</button>
+      </div>
+    </div>
+
+    <input type="file" id="file-input" accept="image/*" hidden>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>
