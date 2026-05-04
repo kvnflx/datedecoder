@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="theme-color" content="#0d0d0d">
-  <title>DECODED — Nachrichten entschlüsseln</title>
+  <title>DateDecoder — Nachrichten entschlüsseln</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -12,22 +12,24 @@
 
     <!-- Landing / Input Mode -->
     <div id="landing">
-      <div class="logo">⚡ DECODED</div>
+      <div class="logo">⚡ DateDecoder</div>
       <p class="tagline">Nachrichten entschlüsseln. Signale erkennen. Klarheit gewinnen.</p>
       <div class="input-box">
         <textarea id="input-text" placeholder="Paste den Chatverlauf oder beschreibe die Situation..."></textarea>
         <div class="input-actions">
           <button id="btn-screenshot" class="btn-secondary">📷 Screenshot</button>
+          <button id="btn-textfile" class="btn-secondary">📄 Datei</button>
           <button id="btn-analyze" class="btn-primary" disabled>Analysieren ⚡</button>
         </div>
       </div>
-      <p class="hints">Beispiele: "Sie hat geschrieben..." · "Er meinte dann..." · Screenshot von WhatsApp</p>
+      <p class="hints">Screenshot · WhatsApp-Export (.txt) · oder Text einfügen</p>
+      <a href="howto.html" class="howto-link">📖 Anleitungen: Wie exportiere ich meine Chats?</a>
     </div>
 
     <!-- Chat Mode -->
     <div id="chat">
       <div class="chat-header">
-        <div class="logo-small">⚡ DECODED</div>
+        <div class="logo-small">⚡ DateDecoder</div>
         <button id="btn-new" class="btn-new">Neue Analyse</button>
       </div>
       <div id="messages"></div>
@@ -38,6 +40,7 @@
     </div>
 
     <input type="file" id="file-input" accept="image/*" hidden>
+    <input type="file" id="textfile-input" accept=".txt,.md,.csv,text/plain,text/markdown" hidden>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>

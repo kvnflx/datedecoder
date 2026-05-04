@@ -40,10 +40,27 @@ body {
 
 .logo {
   color: var(--accent);
-  font-size: 28px;
+  font-size: 26px;
   font-weight: 700;
-  letter-spacing: 3px;
+  letter-spacing: 1px;
   margin-bottom: 8px;
+}
+
+.howto-link {
+  display: inline-block;
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: 12px;
+  margin-top: 16px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.howto-link:hover {
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 .tagline {
@@ -145,9 +162,10 @@ body {
 
 .logo-small {
   color: var(--accent);
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 700;
-  letter-spacing: 3px;
+  letter-spacing: 1px;
+  text-decoration: none;
 }
 
 .btn-new {
@@ -282,6 +300,188 @@ body {
   font-size: 20px;
   cursor: pointer;
   padding: 4px 8px;
+}
+
+/* ── How-To Page ── */
+#howto {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+.howto-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: 10;
+}
+
+.howto-content {
+  max-width: 720px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 24px 20px 60px;
+}
+
+.howto-content h1 {
+  color: var(--accent);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  margin-bottom: 16px;
+}
+
+.howto-content h2 {
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 12px;
+  margin-top: 0;
+}
+
+.howto-content h3 {
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 700;
+  margin: 16px 0 8px;
+  letter-spacing: 1px;
+}
+
+.howto-content p {
+  font-size: 13px;
+  line-height: 1.7;
+  margin-bottom: 12px;
+  color: var(--text);
+}
+
+.howto-content ol,
+.howto-content ul {
+  margin: 8px 0 16px 20px;
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+.howto-content li {
+  margin-bottom: 6px;
+}
+
+.howto-content code {
+  background: var(--surface);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--accent);
+}
+
+.howto-content a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.howto-intro {
+  color: var(--text-secondary);
+  font-size: 13px;
+  margin-bottom: 24px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 8px 8px 0;
+}
+
+.howto-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.howto-nav a {
+  font-size: 11px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  text-decoration: none;
+  color: var(--text-secondary);
+}
+
+.howto-nav a:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.howto-section {
+  margin-bottom: 32px;
+  padding: 20px;
+  background: var(--surface);
+  border-radius: 12px;
+  border: 1px solid var(--border);
+}
+
+.howto-section.best {
+  border-color: var(--accent);
+}
+
+.howto-section.dating {
+  border-color: #444;
+}
+
+.howto-badge {
+  display: inline-block;
+  font-size: 11px;
+  color: var(--accent);
+  background: rgba(0, 230, 118, 0.1);
+  padding: 4px 10px;
+  border-radius: 4px;
+  margin-bottom: 12px;
+  letter-spacing: 1px;
+}
+
+.dating-badge {
+  color: #ff8a8a;
+  background: rgba(255, 138, 138, 0.1);
+}
+
+.howto-tip {
+  margin-top: 12px;
+  padding: 10px 14px;
+  background: var(--bg);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 6px 6px 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.howto-content blockquote {
+  border-left: 3px solid var(--accent);
+  padding: 10px 16px;
+  margin: 12px 0;
+  font-style: italic;
+  color: var(--text-secondary);
+  background: var(--bg);
+  border-radius: 0 6px 6px 0;
+}
+
+.howto-cta {
+  margin-top: 32px;
+  text-align: center;
+}
+
+.btn-primary-link {
+  display: inline-block;
+  background: var(--accent);
+  color: var(--bg) !important;
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-weight: 700;
+  text-decoration: none !important;
+  font-size: 14px;
 }
 
 /* ── Responsive ── */

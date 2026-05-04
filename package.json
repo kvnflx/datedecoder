@@ -1,7 +1,7 @@
 {
-  "name": "decoded",
+  "name": "datedecoder",
   "version": "1.0.0",
-  "description": "DECODED — Dating-Analyse Web-App",
+  "description": "DateDecoder — Dating-Analyse Web-App",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

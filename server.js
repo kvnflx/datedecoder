@@ -67,4 +67,4 @@ app.post('/api/chat', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`DECODED running on port ${PORT}`));
+app.listen(PORT, () => console.log(`DateDecoder running on port ${PORT}`));

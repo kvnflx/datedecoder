@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0d0d0d">
+  <title>Anleitungen — DateDecoder</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="howto">
+    <header class="howto-header">
+      <a href="/" class="logo-small">⚡ DateDecoder</a>
+      <a href="/" class="btn-new">← Zurück</a>
+    </header>
+
+    <main class="howto-content">
+      <h1>📖 Wie exportiere ich meine Chats?</h1>
+      <p class="howto-intro">
+        Hier findest du Anleitungen für die häufigsten Apps. Je sauberer dein Input, desto präziser die Analyse.
+        <strong>Tipp:</strong> Textdateien (z.B. WhatsApp-Export) sind besser als Screenshots — keine OCR-Fehler, vollständige Zeitstempel.
+      </p>
+
+      <nav class="howto-nav">
+        <a href="#whatsapp">WhatsApp</a>
+        <a href="#telegram">Telegram</a>
+        <a href="#imessage">iMessage</a>
+        <a href="#instagram">Instagram</a>
+        <a href="#signal">Signal</a>
+        <a href="#tinder">Tinder</a>
+        <a href="#bumble">Bumble</a>
+        <a href="#lovoo">Lovoo</a>
+        <a href="#hinge">Hinge</a>
+        <a href="#screenshot-tipps">Screenshot-Tipps</a>
+      </nav>
+
+      <section id="whatsapp" class="howto-section best">
+        <div class="howto-badge">✨ Empfohlen — funktioniert am besten</div>
+        <h2>WhatsApp</h2>
+        <h3>iPhone (iOS)</h3>
+        <ol>
+          <li>WhatsApp öffnen → den Chat antippen</li>
+          <li>Oben auf den <strong>Namen</strong> der Person tippen</li>
+          <li>Ganz nach unten scrollen → <strong>"Chat exportieren"</strong></li>
+          <li><strong>"Ohne Medien"</strong> wählen (sonst wird die Datei riesig)</li>
+          <li>Im Share-Sheet: <strong>"In Dateien sichern"</strong> oder per Mail an dich selbst</li>
+          <li>In DateDecoder auf <strong>📄 Datei</strong> klicken und die <code>.txt</code> auswählen</li>
+        </ol>
+
+        <h3>Android</h3>
+        <ol>
+          <li>WhatsApp → Chat öffnen</li>
+          <li>Oben rechts auf die <strong>3 Punkte (⋮)</strong> → <strong>Mehr</strong> → <strong>Chat exportieren</strong></li>
+          <li>Rest wie bei iOS</li>
+        </ol>
+
+        <div class="howto-tip">
+          💡 Du bekommst eine <code>.txt</code> mit Zeitstempeln wie <code>[01.05.26, 18:42] Sie: Mal schauen</code> — die Reaktionszeiten sind ein wichtiges Signal für die Analyse, lass sie unbedingt drin.
+        </div>
+      </section>
+
+      <section id="telegram" class="howto-section">
+        <h2>Telegram</h2>
+        <h3>Desktop (empfohlen)</h3>
+        <ol>
+          <li>Telegram Desktop öffnen → Chat öffnen</li>
+          <li>Oben rechts auf die <strong>3 Punkte (⋮)</strong> → <strong>Chatverlauf exportieren</strong></li>
+          <li>Format <strong>HTML</strong> oder <strong>JSON</strong> wählen, Medien deaktivieren</li>
+          <li>Bei HTML: Datei in Browser öffnen, Inhalt markieren und kopieren</li>
+        </ol>
+
+        <h3>Mobile</h3>
+        <p>Auf Mobile gibt's keinen direkten Export — entweder Desktop nutzen, oder einzelne Nachrichten kopieren (Nachricht lange drücken → Kopieren) und in DateDecoder einfügen.</p>
+      </section>
+
+      <section id="imessage" class="howto-section">
+        <h2>iMessage</h2>
+        <p>iMessage hat <strong>keinen offiziellen Export</strong>. Drei Wege:</p>
+        <ol>
+          <li><strong>Screenshots</strong> (am einfachsten): Mehrere Screenshots vom Chat machen und einzeln per 📷 Screenshot in DateDecoder hochladen</li>
+          <li><strong>Manuell tippen</strong>: Bei kurzen Verläufen — einfach abtippen oder per Sprache diktieren</li>
+          <li><strong>Mac-Backup</strong>: Wenn du iMessage am Mac nutzt, gibt's Tools wie iMazing für richtigen Export — Overkill für die meisten</li>
+        </ol>
+      </section>
+
+      <section id="instagram" class="howto-section">
+        <h2>Instagram DMs</h2>
+        <ol>
+          <li>Browser → <a href="https://www.instagram.com/download/request" target="_blank">instagram.com/download/request</a></li>
+          <li>"Bestimmte Informationen" → "Nachrichten" wählen</li>
+          <li>Format <strong>JSON</strong>, Zeitraum festlegen</li>
+          <li>Anfrage absenden — Meta schickt die Daten per Mail (kann 1-2 Tage dauern!)</li>
+        </ol>
+
+        <p><strong>Schneller:</strong> Screenshots vom Chat in der App machen.</p>
+      </section>
+
+      <section id="signal" class="howto-section">
+        <h2>Signal</h2>
+        <p>Signal verschlüsselt alles und exportiert standardmäßig nicht. Optionen:</p>
+        <ul>
+          <li><strong>Signal Desktop</strong>: Einzelne Nachrichten markieren und kopieren</li>
+          <li><strong>Mobile</strong>: Screenshots</li>
+        </ul>
+        <p>Privacy-by-design heißt hier auch: kein einfacher Export.</p>
+      </section>
+
+      <section id="tinder" class="howto-section dating">
+        <div class="howto-badge dating-badge">💔 Dating-App — nur Screenshots möglich</div>
+        <h2>Tinder</h2>
+        <p>Tinder erlaubt <strong>keinen Chat-Export</strong>. Vorgehen:</p>
+        <ol>
+          <li>Match öffnen, Chat ganz hochscrollen zum Anfang</li>
+          <li>Mehrere Screenshots machen (Power + Lauter-Taste)</li>
+          <li>In DateDecoder einzeln hochladen — die Analyse berücksichtigt den Verlauf automatisch</li>
+        </ol>
+        <p class="howto-tip">💡 Tinder kann man theoretisch alle eigenen Daten anfordern (Settings → Datenschutz → Persönliche Daten herunterladen). Du bekommst eine ZIP mit Chats als JSON. Dauert 1-3 Tage.</p>
+      </section>
+
+      <section id="bumble" class="howto-section dating">
+        <div class="howto-badge dating-badge">💔 Dating-App — nur Screenshots möglich</div>
+        <h2>Bumble</h2>
+        <p>Auch hier: kein Export, nur Screenshots.</p>
+        <ol>
+          <li>Chat öffnen, hochscrollen</li>
+          <li>Screenshots machen</li>
+          <li>In DateDecoder via 📷 Screenshot hochladen</li>
+        </ol>
+      </section>
+
+      <section id="lovoo" class="howto-section dating">
+        <div class="howto-badge dating-badge">💔 Dating-App — nur Screenshots möglich</div>
+        <h2>Lovoo</h2>
+        <p>Wie Tinder/Bumble: nur Screenshots. Tipp: Helligkeit hochdrehen für klarere OCR-Erkennung.</p>
+      </section>
+
+      <section id="hinge" class="howto-section dating">
+        <div class="howto-badge dating-badge">💔 Dating-App — nur Screenshots möglich</div>
+        <h2>Hinge</h2>
+        <p>Auch hier kein Export. Screenshots sind dein Freund.</p>
+      </section>
+
+      <section id="screenshot-tipps" class="howto-section">
+        <h2>📷 Tipps für gute Screenshots</h2>
+        <p>Damit die OCR (Texterkennung) gut funktioniert:</p>
+        <ul>
+          <li><strong>Helles Display</strong> beim Screenshot — Dark Mode ist OCR-feindlich, lieber kurz auf Hell umschalten</li>
+          <li><strong>Kein Zoom</strong> — Original-Schriftgröße bleibt am lesbarsten</li>
+          <li><strong>Pro Screenshot 5-10 Nachrichten</strong> — nicht zu viele auf einmal, sonst wird die Schrift zu klein</li>
+          <li><strong>Mehrere Screenshots nacheinander hochladen</strong> — DateDecoder kann den Kontext über mehrere Uploads halten</li>
+          <li><strong>Nach dem OCR den Text kontrollieren</strong> — bei Tippfehlern korrigieren bevor du auf Analysieren klickst</li>
+        </ul>
+      </section>
+
+      <section class="howto-section">
+        <h2>📝 Eigene Beschreibung</h2>
+        <p>Du musst nicht zwingend exportieren. Du kannst auch einfach beschreiben:</p>
+        <blockquote>
+          "Wir hatten ein Date letzte Woche, lief gut, sie hat sich danach 3 Tage nicht gemeldet. Heute kam: 'Sorry war krass beschäftigt, mal schauen ob wir nochmal was machen.'"
+        </blockquote>
+        <p>Das reicht für eine erste Einschätzung. Bei Bedarf fragt der Decoder nach mehr Details.</p>
+      </section>
+
+      <div class="howto-cta">
+        <a href="/" class="btn-primary-link">Zurück zur Analyse →</a>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

@@ -10,6 +10,8 @@ document.addEventListener('DOMContentLoaded', () => {
   $('#btn-analyze').addEventListener('click', startAnalysis);
   $('#btn-screenshot').addEventListener('click', () => $('#file-input').click());
   $('#file-input').addEventListener('change', handleFileSelect);
+  $('#btn-textfile').addEventListener('click', () => $('#textfile-input').click());
+  $('#textfile-input').addEventListener('change', handleTextFileSelect);
   $('#btn-send').addEventListener('click', sendFollowUp);
   $('#chat-input').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) sendFollowUp();
@@ -133,7 +135,7 @@ function addUserMessage(text) {
   div.className = 'message user-message';
   div.textContent = text;
   $('#messages').appendChild(div);
-  scrollToBottom();
+  scrollToBottom(true);
   return div;
 }
 
@@ -151,7 +153,7 @@ function addAssistantMessage() {
   wrapper.appendChild(label);
   wrapper.appendChild(content);
   $('#messages').appendChild(wrapper);
-  scrollToBottom();
+  scrollToBottom(true);
   return content;
 }
 
@@ -178,9 +180,17 @@ function formatText(text) {
     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
 }
 
-function scrollToBottom() {
+function isNearBottom() {
   const el = $('#messages');
-  el.scrollTop = el.scrollHeight;
+  const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+  return distanceFromBottom < 80;
+}
+
+function scrollToBottom(force = false) {
+  const el = $('#messages');
+  if (force || isNearBottom()) {
+    el.scrollTop = el.scrollHeight;
+  }
 }
 
 function setInputsDisabled(disabled) {
@@ -216,6 +226,31 @@ async function handleFileSelect(e) {
   } catch (err) {
     textarea.value = '';
     textarea.placeholder = 'Text konnte nicht erkannt werden. Versuch’s mit einem klareren Screenshot oder tippe den Text ab.';
+  } finally {
+    btn.textContent = original;
+    btn.disabled = false;
+    e.target.value = '';
+  }
+}
+
+// ── Textdatei-Upload ──
+
+async function handleTextFileSelect(e) {
+  const file = e.target.files?.[0];
+  if (!file) return;
+
+  const textarea = $('#input-text');
+  const btn = $('#btn-textfile');
+  const original = btn.textContent;
+  btn.textContent = '⏳ Wird gelesen...';
+  btn.disabled = true;
+
+  try {
+    const text = await file.text();
+    textarea.value = text.trim();
+    updateAnalyzeBtn();
+  } catch (err) {
+    textarea.placeholder = 'Datei konnte nicht gelesen werden. Versuch eine andere Datei oder paste den Text direkt.';
   } finally {
     btn.textContent = original;
     btn.disabled = false;
