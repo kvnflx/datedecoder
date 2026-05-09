@@ -19,7 +19,7 @@ app.post('/api/chat', async (req, res) => {
     ...trimmed
   ];
 
-  const MODELS = ['qwen/qwen3.5-122b-a10b', 'meta/llama-3.3-70b-instruct'];
+  const MODELS = ['qwen/qwen3.5-122b-a10b', 'mistralai/mistral-large'];
 
   try {
     let response;
