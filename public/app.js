@@ -106,7 +106,8 @@ async function streamResponse(messages, targetEl) {
         }
         try {
           const parsed = JSON.parse(data);
-          const token = parsed.choices?.[0]?.delta?.content || '';
+          const delta = parsed.choices?.[0]?.delta || {};
+          const token = delta.content || delta.reasoning_content || '';
           fullContent += token;
           targetEl.innerHTML = formatText(fullContent) + '<span class="cursor">▌</span>';
           scrollToBottom();
