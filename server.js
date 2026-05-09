@@ -19,23 +19,41 @@ app.post('/api/chat', async (req, res) => {
     ...trimmed
   ];
 
-  try {
-    const response = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.NVIDIA_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: 'qwen/qwen3.5-122b-a10b',
-        messages: fullMessages,
-        stream: true,
-        max_tokens: 4096
-      })
-    });
+  const MODELS = ['qwen/qwen3.5-122b-a10b', 'meta/llama-3.3-70b-instruct'];
 
-    if (!response.ok) {
-      if (response.status === 429) {
+  try {
+    let response;
+    let lastStatus;
+    for (const model of MODELS) {
+      try {
+        response = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${process.env.NVIDIA_API_KEY}`
+          },
+          body: JSON.stringify({
+            model,
+            messages: fullMessages,
+            stream: true,
+            max_tokens: 4096
+          })
+        });
+        if (response.ok) {
+          console.log(`Using model: ${model}`);
+          break;
+        }
+        lastStatus = response.status;
+        if (response.status === 429) break;
+        console.warn(`Model ${model} returned ${response.status}, trying next...`);
+      } catch (err) {
+        lastStatus = 0;
+        console.warn(`Model ${model} fetch failed: ${err.message}, trying next...`);
+      }
+    }
+
+    if (!response || !response.ok) {
+      if (lastStatus === 429) {
         return res.status(429).json({ error: 'Zu viele Anfragen — kurz warten und nochmal versuchen.' });
       }
       return res.status(502).json({ error: 'Server gerade nicht erreichbar. Versuch\'s in ein paar Sekunden nochmal.' });
