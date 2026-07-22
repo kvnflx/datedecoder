@@ -54,7 +54,39 @@ Nach dem Deploy:
 
 - **API-Key niemals committen.** Er gehört nur in Coolify-Environment-Variables.
 - **Existing Working Code:** Die App ist getestet und läuft. Mache keine Änderungen am Code, außer der User bittet darum.
-- **Modell-Fallback:** Falls `qwen/qwen3.5-122b-a10b` nicht antwortet (war beim Bauen ein Problem mit größeren Modellen wie DeepSeek V4), als Backup `meta/llama-3.3-70b-instruct` in `server.js` Zeile 30 setzen.
+- **Modell-Kette:** Steht in `server.js` im Modulscope als `MODELS`. Aktuell:
+  `mistralai/mistral-small-4-119b-2603` → `google/gemma-4-31b-it` → `meta/llama-3.3-70b-instruct`.
+  Bewusst über drei Anbieter verteilt — siehe Vorfall unten.
+
+## Vorfall 2026-07-20: Was schiefging und was daraus folgt
+
+NVIDIA schaltete `qwen/qwen3.5-122b-a10b` zum 2026-07-20 ab (HTTP 410 Gone, End of Life).
+Der einzige Fallback `mistralai/mistral-large` war zeitgleich für den Account nicht mehr
+auflösbar (HTTP 404). Die Seite zeigte nur noch „Unbekannter Fehler". Daraus die Regeln:
+
+- **Mindestens drei Modelle von mindestens zwei Anbietern.** Bei zwei Gliedern aus einer
+  Hand genügt ein einzelner Anbieter-Rollout, um die App komplett zu killen.
+- **Keine unversionierten Modell-Aliase.** `mistralai/mistral-large` ist so ein Alias —
+  NVIDIA kann sein Ziel jederzeit still umhängen. Immer die versionierte ID nehmen.
+- **Nie Status 502 oder 504 senden.** Cloudflare ersetzt beide durch eine eigene
+  text/plain-Seite und verwirft den Body; die deutsche Fehlermeldung erreicht den Browser
+  dann nie. 503 wird unverändert durchgereicht.
+- **Timeout-Budget beachten.** `MODELS.length × CONNECT_TIMEOUT_MS` muss unter Cloudflares
+  Proxy-Read-Timeout bleiben, sonst kappt der Proxy die Verbindung vor der eigenen
+  Fehlerantwort. `test/modelle.test.mjs` rechnet das nach.
+- **Fehler-Body des Upstreams immer loggen.** NVIDIA nennt darin Modellname und
+  Abschaltdatum im Klartext. Ohne dieses Log war der Ausfall zwei Tage lang ein Blindflug.
+
+## Tests
+
+```bash
+npm test                                    # Mock-Upstream, kein API-Key nötig
+NVIDIA_API_KEY=nvapi-... npm run test:live  # prüft die Modell-Kette gegen NVIDIA
+```
+
+`test/modelle.test.mjs` ist der Frühwarner: Er schlägt an, sobald ein Modell der Kette
+nicht mehr mit HTTP 200 antwortet — idealerweise bevor Nutzer es merken. Sinnvoll als
+regelmäßiger Job.
 
 ## Dateien
 

@@ -79,8 +79,30 @@ async function streamResponse(messages, targetEl) {
     });
 
     if (!response.ok) {
-      const data = await response.json().catch(() => ({}));
-      throw new Error(data.error || 'Unbekannter Fehler');
+      // Body genau einmal als Text lesen und optimistisch parsen. Ein reines
+      // response.json() scheitert, sobald ein Proxy (Cloudflare, Traefik) eine
+      // eigene text/plain-Fehlerseite liefert — dann blieb früher nur der
+      // nichtssagende Text "Unbekannter Fehler" übrig.
+      const raw = await response.text().catch(() => '');
+      let msg = '';
+      try {
+        const d = JSON.parse(raw);
+        if (d && typeof d === 'object' && typeof d.error === 'string') msg = d.error;
+      } catch (e) {
+        // kein JSON — dann greift die statusbezogene Meldung unten
+      }
+      if (!msg) {
+        const byStatus = {
+          413: 'Der Chatverlauf ist zu groß. Kürze ihn oder teile ihn auf.',
+          429: 'Zu viele Anfragen — kurz warten und nochmal versuchen.',
+          502: 'Der Analyse-Server ist gerade nicht erreichbar (502). Versuch es in ein paar Sekunden nochmal.',
+          503: 'Der Analyse-Server ist gerade nicht erreichbar (503). Versuch es in ein paar Sekunden nochmal.',
+          504: 'Zeitüberschreitung beim Analyse-Server (504).',
+          524: 'Die Analyse hat zu lange gedauert (524). Versuch es mit einem kürzeren Chatverlauf.'
+        };
+        msg = byStatus[response.status] || `Unerwarteter Fehler (HTTP ${response.status}).`;
+      }
+      throw new Error(msg);
     }
 
     const reader = response.body.getReader();
@@ -104,16 +126,27 @@ async function streamResponse(messages, targetEl) {
           targetEl.innerHTML = formatText(fullContent);
           return fullContent;
         }
+        let parsed;
         try {
-          const parsed = JSON.parse(data);
-          const delta = parsed.choices?.[0]?.delta || {};
-          const token = delta.content || delta.reasoning_content || '';
-          fullContent += token;
-          targetEl.innerHTML = formatText(fullContent) + '<span class="cursor">▌</span>';
-          scrollToBottom();
+          parsed = JSON.parse(data);
         } catch (e) {
-          // skip unparseable SSE lines
+          continue; // unlesbare SSE-Zeile überspringen
         }
+
+        // Fehler, die erst mitten im Stream auftreten, dürfen nicht stillschweigend
+        // verschluckt werden — sonst bricht die Analyse kommentarlos ab.
+        if (parsed.error) {
+          throw new Error(parsed.error.message || 'Fehler während der Analyse.');
+        }
+
+        const delta = parsed.choices?.[0]?.delta || {};
+        // reasoning_content bewusst NICHT anhängen: bei Reasoning-Modellen landete
+        // sonst die rohe Denkkette im Analysekasten und überdeckte die 4 Schichten.
+        const token = delta.content || '';
+        if (!token) continue;
+        fullContent += token;
+        targetEl.innerHTML = formatText(fullContent) + '<span class="cursor">▌</span>';
+        scrollToBottom();
       }
     }
 
