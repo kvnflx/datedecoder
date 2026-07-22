@@ -3,7 +3,9 @@ const path = require('path');
 const systemPrompt = require('./prompt');
 
 const app = express();
-app.use(express.json({ limit: '1mb' }));
+// Großzügig, damit auch ein mehrjähriger WhatsApp-Export (~1,6 MB) ankommt.
+// Zu lange Verläufe werden nicht abgelehnt, sondern gekürzt — siehe kuerzeVerlauf().
+app.use(express.json({ limit: '8mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Die Kette verteilt sich bewusst über drei Anbieter. Am 2026-07-20 fielen
@@ -24,6 +26,60 @@ const NVIDIA_URL = process.env.NVIDIA_URL || 'https://integrate.api.nvidia.com/v
 const CONNECT_TIMEOUT_MS = Number(process.env.CONNECT_TIMEOUT_MS) || 30000;
 const IDLE_TIMEOUT_MS = Number(process.env.IDLE_TIMEOUT_MS) || 90000; // ohne neue Daten im Stream
 
+// Das schwächste Modell der Kette bestimmt die Grenze: gemessen 262.144 Tokens
+// bei mistral-small-4, aber nur 131.072 bei llama-3.3-70b. Bei ~570 Tokens/KB
+// bleiben nach System-Prompt und Antwortbudget gut 200 KB übrig. Würde man sich
+// am stärksten Modell orientieren, versagte der Fallback genau dann, wenn er
+// gebraucht wird.
+const MAX_CHAT_BYTES = Number(process.env.MAX_CHAT_BYTES) || 200 * 1024;
+
+/** 12463 -> "12.463" — deterministisch, unabhängig von der ICU-Ausstattung des Images. */
+function zahl(n) {
+  return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+}
+
+/**
+ * Kürzt einen überlangen Verlauf auf die NEUESTEN Nachrichten. Für eine
+ * Dating-Analyse zählt die aktuelle Dynamik — was vor drei Jahren geschrieben
+ * wurde, verwässert das Ergebnis eher, als dass es hilft.
+ * Geschnitten wird an Zeilengrenzen, damit keine Nachricht zerrissen wird.
+ */
+function kuerzeVerlauf(text) {
+  if (Buffer.byteLength(text, 'utf8') <= MAX_CHAT_BYTES) {
+    return { text, gekuerzt: false };
+  }
+
+  const zeilen = text.split('\n');
+  const gesamt = zeilen.filter((z) => z.trim()).length;
+
+  const behalten = [];
+  let summe = 0;
+  for (let i = zeilen.length - 1; i >= 0; i--) {
+    const b = Buffer.byteLength(zeilen[i], 'utf8') + 1;
+    if (summe + b > MAX_CHAT_BYTES) break;
+    behalten.unshift(zeilen[i]);
+    summe += b;
+  }
+
+  // Fallback für Texte ohne Zeilenumbrüche (z. B. OCR am Stück): hart schneiden.
+  if (behalten.length === 0) {
+    const roh = Buffer.from(text, 'utf8').subarray(-MAX_CHAT_BYTES).toString('utf8');
+    return { text: roh, gekuerzt: true, gesamt, uebrig: 0 };
+  }
+
+  return {
+    text: behalten.join('\n'),
+    gekuerzt: true,
+    gesamt,
+    uebrig: behalten.filter((z) => z.trim()).length
+  };
+}
+
+/** Erkennt, ob der Upstream wegen Überlänge abgelehnt hat — nicht wegen Ausfalls. */
+function istKontextFehler(status, detail) {
+  return status === 400 && /context length|context window|input tokens|too long|maximum context/i.test(detail);
+}
+
 app.post('/api/chat', async (req, res) => {
   const { messages } = req.body;
 
@@ -32,7 +88,23 @@ app.post('/api/chat', async (req, res) => {
   }
 
   const trimmed = messages.slice(-20);
-  const fullMessages = [{ role: 'system', content: systemPrompt }, ...trimmed];
+
+  // Überlange Einzelnachrichten (typisch: der importierte Verlauf) kürzen,
+  // statt sie erst ans Modell zu schicken und dort an der Kontextgrenze zu scheitern.
+  let hinweis = null;
+  const gekuerzt = trimmed.map((m) => {
+    if (typeof m.content !== 'string') return m;
+    const k = kuerzeVerlauf(m.content);
+    if (!k.gekuerzt) return m;
+    hinweis =
+      `Der Verlauf war sehr lang. Analysiert wurden die neuesten ${zahl(k.uebrig)} ` +
+      `von ${zahl(k.gesamt)} Nachrichten — die aktuellsten sind für die Einschätzung ` +
+      'die aussagekräftigsten.';
+    console.log(`Verlauf gekürzt: ${zahl(k.gesamt)} -> ${zahl(k.uebrig)} Nachrichten`);
+    return { ...m, content: k.text };
+  });
+
+  const fullMessages = [{ role: 'system', content: systemPrompt }, ...gekuerzt];
 
   let activeReader = null;
   // 'close' auf res, nicht auf req: req 'close' feuert bereits, sobald
@@ -98,6 +170,13 @@ app.post('/api/chat', async (req, res) => {
       if (attempts.length && attempts.every((a) => a.status === 429)) {
         return res.status(429).json({ error: 'Zu viele Anfragen — kurz warten und nochmal versuchen.' });
       }
+      // Lehnen alle Modelle wegen Überlänge ab, ist der Server erreichbar und
+      // die Meldung "nicht erreichbar" schlicht falsch.
+      if (attempts.length && attempts.every((a) => istKontextFehler(a.status, a.detail))) {
+        return res.status(413).json({
+          error: 'Der Chatverlauf ist zu lang für die Analyse. Kürze ihn oder teile ihn auf.'
+        });
+      }
       // 503 statt 502: Cloudflare ersetzt Origin-502 und -504 durch eine eigene
       // text/plain-Seite und verwirft den Body. 503 wird unverändert durchgereicht —
       // nur so erreicht diese Meldung überhaupt den Browser.
@@ -110,6 +189,10 @@ app.post('/api/chat', async (req, res) => {
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('X-Accel-Buffering', 'no'); // verhindert Puffern durch Reverse Proxies
     res.flushHeaders();
+
+    // Transparenz vor der Analyse: Wurde gekürzt, muss der Nutzer das wissen —
+    // sonst zieht er Schlüsse aus einer unvollständigen Grundlage.
+    if (hinweis) res.write(`data: ${JSON.stringify({ hinweis })}\n\n`);
 
     const reader = response.body.getReader();
     activeReader = reader;

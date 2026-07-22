@@ -194,11 +194,27 @@ describe('Fehlerpfade', () => {
     assert.match(txt, /\[DONE\]/);
   });
 
-  test('zu großer Body -> 413 als JSON, nicht als HTML-Stacktrace', async () => {
+  test('Verlauf in Export-Größe (1,6 MB) wird angenommen, nicht abgelehnt', async () => {
+    upstream.modus = 'ok';
     const r = await fetch(url(), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: body('x'.repeat(1_200_000))
+      body: body('Zeile mit etwas Text\n'.repeat(80_000))
+    });
+    await r.text().catch(() => '');
+
+    assert.equal(
+      r.status,
+      200,
+      'Ein mehrjähriger WhatsApp-Export liegt bei ~1,6 MB. Der wird gekürzt, nicht abgewiesen.'
+    );
+  });
+
+  test('absurd großer Body -> 413 als JSON, nicht als HTML-Stacktrace', async () => {
+    const r = await fetch(url(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: body('x'.repeat(9_000_000))
     });
 
     assert.equal(r.status, 413);

@@ -139,6 +139,14 @@ async function streamResponse(messages, targetEl) {
           throw new Error(parsed.error.message || 'Fehler während der Analyse.');
         }
 
+        // Der Server meldet hier z. B., dass ein sehr langer Verlauf gekürzt wurde.
+        // Das gehört sichtbar über die Analyse — sonst zieht man Schlüsse aus einer
+        // unvollständigen Grundlage, ohne es zu merken.
+        if (parsed.hinweis) {
+          showHinweis(targetEl, parsed.hinweis);
+          continue;
+        }
+
         const delta = parsed.choices?.[0]?.delta || {};
         // reasoning_content bewusst NICHT anhängen: bei Reasoning-Modellen landete
         // sonst die rohe Denkkette im Analysekasten und überdeckte die 4 Schichten.
@@ -189,6 +197,15 @@ function addAssistantMessage() {
   $('#messages').appendChild(wrapper);
   scrollToBottom(true);
   return content;
+}
+
+function showHinweis(contentEl, text) {
+  const wrapper = contentEl.parentElement;
+  if (!wrapper || wrapper.querySelector('.analyse-hinweis')) return;
+  const box = document.createElement('div');
+  box.className = 'analyse-hinweis';
+  box.textContent = 'ℹ️ ' + text;
+  wrapper.insertBefore(box, contentEl);
 }
 
 function makeCollapsible(contentEl) {
