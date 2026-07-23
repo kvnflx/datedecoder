@@ -17,12 +17,30 @@
       <div class="input-box">
         <textarea id="input-text" placeholder="Paste den Chatverlauf oder beschreibe die Situation..."></textarea>
         <div class="input-actions">
-          <button id="btn-screenshot" class="btn-secondary">📷 Screenshot</button>
+          <button id="btn-screenshot" class="btn-secondary">📷 Screenshots</button>
           <button id="btn-textfile" class="btn-secondary">📄 Datei</button>
           <button id="btn-analyze" class="btn-primary" disabled>Analysieren ⚡</button>
         </div>
+        <div id="shots-tray" hidden>
+          <div class="shots-head">
+            Screenshots in Reihenfolge
+            <span class="shots-hint">— automatisch nach Uhrzeit sortiert, bei Bedarf mit ▲▼ korrigieren</span>
+          </div>
+          <div class="shots-seite">
+            <span>Meine Nachrichten stehen:</span>
+            <button id="btn-seite-rechts" class="seite-opt aktiv" type="button">rechts</button>
+            <button id="btn-seite-links" class="seite-opt" type="button">links</button>
+          </div>
+          <ol id="shots-list"></ol>
+          <div class="shots-actions">
+            <button id="btn-shots-run" class="btn-primary" type="button">Text erkennen</button>
+            <button id="btn-shots-clear" class="btn-secondary" type="button">Verwerfen</button>
+          </div>
+          <span id="shots-progress" class="sr-only" aria-live="polite"></span>
+        </div>
+        <div id="shots-msg" class="shots-msg" role="status" aria-live="polite" hidden></div>
       </div>
-      <p class="hints">Screenshot · WhatsApp-Export (.txt) · oder Text einfügen</p>
+      <p class="hints">Screenshots (auch mehrere) · WhatsApp-Export (.txt) · oder Text einfügen</p>
       <a href="howto.html" class="howto-link">📖 Anleitungen: Wie exportiere ich meine Chats?</a>
     </div>
 
@@ -39,11 +57,12 @@
       </div>
     </div>
 
-    <input type="file" id="file-input" accept="image/*" hidden>
+    <input type="file" id="file-input" accept="image/*" multiple hidden>
     <input type="file" id="textfile-input" accept=".txt,.md,.csv,text/plain,text/markdown" hidden>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <script src="seiten.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
