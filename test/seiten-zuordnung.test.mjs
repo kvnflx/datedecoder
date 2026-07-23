@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import seiten from '../public/seiten.js';
 
-const { klassifiziereZeilen, baueVerlauf } = seiten;
+const { sortiereNachHoehe, klassifiziereZeilen, baueVerlauf } = seiten;
 
 // Bildbreite 1000, Standard-Totzone 0.30 -> Mitte gilt von 350 bis 650.
 const BREITE = 1000;
@@ -45,13 +45,25 @@ test('leere Eingaben ergeben leeren Verlauf, kein Absturz', () => {
   assert.equal(baueVerlauf([]), '');
   assert.equal(baueVerlauf(null), '');
   assert.deepEqual(klassifiziereZeilen(null, BREITE, 'rechts'), []);
+  assert.deepEqual(sortiereNachHoehe(null), []);
 });
 
-test('durchgehende Pipeline: Boxen rein, beschrifteter Verlauf raus', () => {
-  const zeilen = [
-    { text: 'Sollen wir Freitag?', x0: 680, x1: 940 },
-    { text: 'Mal schauen', x0: 60, x1: 320 }
+test('sortiereNachHoehe bringt spaltenweise gelieferte Zeilen in echte Lesereihenfolge', () => {
+  // Tesseract liefert erst die ganze linke Spalte, dann die rechte:
+  const spaltenweise = [
+    { text: 'links-oben', x0: 50, x1: 300, y0: 100, y1: 130 },
+    { text: 'links-unten', x0: 50, x1: 300, y0: 300, y1: 330 },
+    { text: 'rechts-mitte', x0: 700, x1: 950, y0: 200, y1: 230 }
   ];
-  const verlauf = baueVerlauf(klassifiziereZeilen(zeilen, BREITE, 'rechts'));
+  const sortiert = sortiereNachHoehe(spaltenweise);
+  assert.deepEqual(sortiert.map((z) => z.text), ['links-oben', 'rechts-mitte', 'links-unten']);
+});
+
+test('durchgehende Pipeline: Boxen -> vertikal sortiert -> beschrifteter Verlauf', () => {
+  const zeilen = [
+    { text: 'Mal schauen', x0: 60, x1: 320, y0: 400, y1: 430 },
+    { text: 'Sollen wir Freitag?', x0: 680, x1: 940, y0: 100, y1: 130 }
+  ];
+  const verlauf = baueVerlauf(klassifiziereZeilen(sortiereNachHoehe(zeilen), BREITE, 'rechts'));
   assert.equal(verlauf, 'Ich: Sollen wir Freitag?\nGegenüber: Mal schauen');
 });

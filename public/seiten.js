@@ -3,6 +3,19 @@
 // werden die Funktionen zu globalen Bezeichnern (klassischer <script>), in Node
 // exportiert sie module.exports.
 
+// Bringt die OCR-Zeilen in echte Lesereihenfolge: von oben nach unten nach
+// vertikaler Mitte. Nötig, weil Tesseract bei Zwei-Spalten-Layouts (linke/rechte
+// Bubbles) die Blöcke spaltenweise liefern kann statt zeilenweise verschränkt.
+// Bei gleicher Höhe entscheidet die horizontale Position (links vor rechts).
+function sortiereNachHoehe(zeilen) {
+  return (zeilen || []).slice().sort((a, b) => {
+    const ay = (a.y0 + a.y1) / 2;
+    const by = (b.y0 + b.y1) / 2;
+    if (ay !== by) return ay - by;
+    return (a.x0 + a.x1) / 2 - (b.x0 + b.x1) / 2;
+  });
+}
+
 // Ordnet jede OCR-Zeile ihrer Seite zu.
 //   zeilen: [{ text, x0, x1 }] — x0/x1 = linke/rechte Kante der Zeile in Bildpixeln
 //   bildBreite: Breite des Screenshots in Pixeln
@@ -72,5 +85,5 @@ function baueVerlauf(klassifizierte) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { klassifiziereZeilen, baueVerlauf };
+  module.exports = { sortiereNachHoehe, klassifiziereZeilen, baueVerlauf };
 }

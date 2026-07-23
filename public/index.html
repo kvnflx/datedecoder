@@ -2,10 +2,10 @@
 <html lang="de">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#0d0d0d">
   <title>DateDecoder — Nachrichten entschlüsseln</title>
-  <link rel="stylesheet" href="style.css?v=2">
+  <link rel="stylesheet" href="style.css?v=3">
 </head>
 <body>
   <div id="app" class="mode-input">
@@ -26,10 +26,10 @@
             Screenshots in Reihenfolge
             <span class="shots-hint">— automatisch nach Uhrzeit sortiert, bei Bedarf mit ▲▼ korrigieren</span>
           </div>
-          <div class="shots-seite">
+          <div class="shots-seite" role="group" aria-label="Meine Nachrichten stehen">
             <span>Meine Nachrichten stehen:</span>
-            <button id="btn-seite-rechts" class="seite-opt aktiv" type="button">rechts</button>
-            <button id="btn-seite-links" class="seite-opt" type="button">links</button>
+            <button id="btn-seite-rechts" class="seite-opt aktiv" type="button" aria-pressed="true">rechts</button>
+            <button id="btn-seite-links" class="seite-opt" type="button" aria-pressed="false">links</button>
           </div>
           <ol id="shots-list"></ol>
           <div class="shots-actions">
@@ -38,7 +38,7 @@
           </div>
           <span id="shots-progress" class="sr-only" aria-live="polite"></span>
         </div>
-        <div id="shots-msg" class="shots-msg" role="status" aria-live="polite" hidden></div>
+        <div id="shots-msg" class="shots-msg" role="status" aria-live="polite"></div>
       </div>
       <p class="hints">Screenshots (auch mehrere) · WhatsApp-Export (.txt) · oder Text einfügen</p>
       <a href="howto.html" class="howto-link">📖 Anleitungen: Wie exportiere ich meine Chats?</a>
@@ -62,7 +62,7 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-  <script src="seiten.js?v=2"></script>
-  <script src="app.js?v=2"></script>
+  <script src="seiten.js?v=3"></script>
+  <script src="app.js?v=3"></script>
 </body>
 </html>

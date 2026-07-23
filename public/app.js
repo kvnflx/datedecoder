@@ -33,7 +33,8 @@ function updateAnalyzeBtn() {
 
 async function startAnalysis() {
   const text = $('#input-text').value.trim();
-  if (!text || state.isStreaming) return;
+  // shotsBusy: keine Analyse starten, solange die OCR noch ins Textfeld schreibt.
+  if (!text || state.isStreaming || shotsBusy) return;
 
   state.messages = [{ role: 'user', content: text }];
   switchMode('chat');
@@ -277,8 +278,12 @@ let meineSeite = 'rechts';    // wo die eigenen Nachrichten stehen: 'rechts' | '
 function setSeite(seite) {
   if (shotsBusy) return;
   meineSeite = seite === 'links' ? 'links' : 'rechts';
-  $('#btn-seite-rechts').classList.toggle('aktiv', meineSeite === 'rechts');
-  $('#btn-seite-links').classList.toggle('aktiv', meineSeite === 'links');
+  const r = $('#btn-seite-rechts');
+  const l = $('#btn-seite-links');
+  r.classList.toggle('aktiv', meineSeite === 'rechts');
+  l.classList.toggle('aktiv', meineSeite === 'links');
+  r.setAttribute('aria-pressed', String(meineSeite === 'rechts'));
+  l.setAttribute('aria-pressed', String(meineSeite === 'links'));
 }
 
 function handleFileSelect(e) {
@@ -389,16 +394,23 @@ function onShotAction(e) {
     return;
   }
   renderShots();
-  stelleFokusWiederHer(id, aktion);
+  stelleFokusWiederHer(id, aktion, i);
 }
 
 // Nach dem Neuaufbau der Liste den Fokus sinnvoll zurücksetzen, damit Tastatur- und
 // Screenreader-Bedienung nicht bei jedem Schritt nach oben springt.
-function stelleFokusWiederHer(id, aktion) {
+function stelleFokusWiederHer(id, aktion, index) {
   const list = $('#shots-list');
   if (aktion === 'shot-del') {
-    const ziel = list.querySelector('.shot-btn:not(:disabled)') || $('#btn-shots-run');
-    if (ziel && !ziel.disabled) ziel.focus();
+    if (state.shots.length === 0) {
+      $('#btn-screenshot').focus(); // Tray ist ausgeblendet — auf sichtbaren Knopf ausweichen
+      return;
+    }
+    // Die Zeile fokussieren, die in den frei gewordenen Index nachgerückt ist.
+    const zielIndex = Math.min(index, state.shots.length - 1);
+    const row = list.children[zielIndex];
+    const knopf = row && (row.querySelector('.shot-del') || row.querySelector('.shot-btn:not(:disabled)'));
+    if (knopf) knopf.focus();
     return;
   }
   const row = list.querySelector('.shot-row[data-id="' + id + '"]');
@@ -433,7 +445,11 @@ async function runShots() {
   runBtn.disabled = true;
   clearBtn.disabled = true;
   setSecondaryDisabled(true);
-  $('#shots-tray').classList.add('shots-busy');
+  const tray = $('#shots-tray');
+  tray.classList.add('shots-busy');
+  // Zeilen- und Seiten-Knöpfe auch programmatisch sperren (nicht nur optisch),
+  // damit Tastatur/Screenreader sie nicht als aktiv wahrnehmen.
+  tray.querySelectorAll('.shot-btn, .seite-opt').forEach((b) => { b.disabled = true; });
   setShotsMsg('');
 
   const stapel = state.shots.slice(); // Reihenfolge einfrieren, UI ist gesperrt
@@ -449,7 +465,9 @@ async function runShots() {
     setProgress('');
     setShotsMsg('⚠ Texterkennung konnte nicht geladen werden — Internetverbindung oder Adblocker prüfen und erneut versuchen.');
     runBtn.textContent = `Text erkennen (${total})`;
+    renderShots(); // Knöpfe mit korrekten Zuständen neu aufbauen (Stapel unverändert)
     beendeLauf();
+    updateAnalyzeBtn();
     return;
   }
 
@@ -507,29 +525,46 @@ async function runShots() {
   updateAnalyzeBtn();
 }
 
-// Hebt die UI-Sperre nach einem OCR-Lauf wieder auf.
+// Hebt die UI-Sperre nach einem OCR-Lauf wieder auf. Die Zeilen-Knöpfe werden von
+// renderShots mit korrekten Zuständen neu gebaut; die Seiten-Knöpfe hier reaktiviert.
 function beendeLauf() {
   shotsBusy = false;
   $('#btn-shots-run').disabled = false;
   $('#btn-shots-clear').disabled = false;
   setSecondaryDisabled(false);
-  $('#shots-tray').classList.remove('shots-busy');
+  const tray = $('#shots-tray');
+  tray.classList.remove('shots-busy');
+  tray.querySelectorAll('.seite-opt').forEach((b) => { b.disabled = false; });
 }
 
 // Erkennt ein Bild und liefert den beschrifteten Verlauf plus die Helligkeiten je Zeile.
 async function verarbeiteBild(file, worker) {
   const { data } = await worker.recognize(file, {}, { blocks: true });
 
-  const zeilen = [];
-  for (const block of data.blocks || []) {
-    for (const line of block.lines || []) {
-      const t = (line.text || '').trim();
-      if (t && line.bbox) zeilen.push({ text: t, x0: line.bbox.x0, x1: line.bbox.x1, bbox: line.bbox });
+  // Zeilen einsammeln: bevorzugt aus dem flachen data.lines (v5 liefert es), sonst
+  // aus block.paragraphs[].lines[]. block.lines existiert zur Laufzeit NICHT.
+  const rohZeilen = [];
+  if (Array.isArray(data.lines) && data.lines.length) {
+    for (const line of data.lines) rohZeilen.push(line);
+  } else {
+    for (const block of data.blocks || []) {
+      for (const par of block.paragraphs || []) {
+        for (const line of par.lines || []) rohZeilen.push(line);
+      }
     }
+  }
+
+  const zeilen = [];
+  for (const line of rohZeilen) {
+    const t = (line.text || '').trim();
+    const bb = line.bbox;
+    if (t && bb) zeilen.push({ text: t, x0: bb.x0, x1: bb.x1, y0: bb.y0, y1: bb.y1, bbox: bb });
   }
   if (!zeilen.length) return { verlauf: '', helligkeiten: [] };
 
-  // Bildbreite und Pixel für Position und Farb-Absicherung aus einem Canvas.
+  // Echte Lesereihenfolge herstellen (Tesseract kann Blöcke spaltenweise liefern).
+  const sortiert = sortiereNachHoehe(zeilen);
+
   try {
     const bitmap = await createImageBitmap(file);
     const breite = bitmap.width;
@@ -542,19 +577,36 @@ async function verarbeiteBild(file, worker) {
     const px = ctx.getImageData(0, 0, breite, hoehe).data;
     if (bitmap.close) bitmap.close();
 
-    const klass = klassifiziereZeilen(zeilen, breite, meineSeite);
+    const klass = klassifiziereZeilen(sortiert, breite, meineSeite);
     const helligkeiten = [];
-    for (let k = 0; k < zeilen.length; k++) {
+    for (let k = 0; k < sortiert.length; k++) {
       if (klass[k].seite === 'kontext') continue;
-      const lum = mittlereHelligkeit(px, zeilen[k].bbox, breite, hoehe);
+      const lum = mittlereHelligkeit(px, sortiert[k].bbox, breite, hoehe);
       if (lum !== null) helligkeiten.push({ seite: klass[k].seite, lum });
     }
     return { verlauf: baueVerlauf(klass), helligkeiten };
   } catch (e) {
-    // Canvas/Bitmap nicht verfügbar: nur Position, Breite aus der größten rechten Kante nähern.
-    const breite = zeilen.reduce((m, z) => Math.max(m, z.x1), 0) || 1;
-    return { verlauf: baueVerlauf(klassifiziereZeilen(zeilen, breite, meineSeite)), helligkeiten: [] };
+    // Canvas/Bitmap nicht verfügbar: echte Bildbreite per <img> holen, sonst als
+    // Näherung die größte rechte Textkante. Kein Farb-Check auf diesem Pfad.
+    let breite = await bildBreiteFallback(file);
+    if (!breite) breite = sortiert.reduce((m, z) => Math.max(m, z.x1), 0) || 1;
+    return { verlauf: baueVerlauf(klassifiziereZeilen(sortiert, breite, meineSeite)), helligkeiten: [] };
   }
+}
+
+// Echte Bildbreite über ein <img>-Element ermitteln (Fallback ohne Canvas).
+function bildBreiteFallback(file) {
+  return new Promise((resolve) => {
+    try {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => { const w = img.naturalWidth || 0; URL.revokeObjectURL(url); resolve(w); };
+      img.onerror = () => { URL.revokeObjectURL(url); resolve(0); };
+      img.src = url;
+    } catch (e) {
+      resolve(0);
+    }
+  });
 }
 
 // Mittlere Helligkeit (0–255) über ein Raster innerhalb der Zeilen-Box.
@@ -599,12 +651,15 @@ function setSecondaryDisabled(disabled) {
   $('#btn-screenshot').disabled = disabled;
   $('#btn-textfile').disabled = disabled;
   $('#btn-analyze').disabled = disabled;
+  // Textfeld während der OCR sperren, damit ein Tastendruck den Analyse-Knopf nicht
+  // über updateAnalyzeBtn wieder aktiviert und die shotsBusy-Sperre umgeht.
+  $('#input-text').disabled = disabled;
 }
 
 function setShotsMsg(text) {
-  const el = $('#shots-msg');
-  el.textContent = text || '';
-  el.hidden = !text;
+  // Kein hidden-Toggle: die Region bleibt im A11y-Baum, damit aria-live zuverlässig
+  // ansagt. Bei leerem Text ist sie via CSS (:empty) ohne Abstand unsichtbar.
+  $('#shots-msg').textContent = text || '';
 }
 
 function setProgress(text) {

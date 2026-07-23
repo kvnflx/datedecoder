@@ -301,6 +301,11 @@ body {
   line-height: 1.5;
 }
 
+/* Leer bleibt die Live-Region im A11y-Baum (kein display:none), nur ohne Abstand. */
+.shots-msg:empty {
+  margin-top: 0;
+}
+
 /* ── Chat ── */
 #chat {
   display: flex;
