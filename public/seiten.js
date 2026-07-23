@@ -3,46 +3,49 @@
 // werden die Funktionen zu globalen Bezeichnern (klassischer <script>), in Node
 // exportiert sie module.exports.
 
-// Bringt die OCR-Zeilen in echte Lesereihenfolge: von oben nach unten nach
-// vertikaler Mitte. Nötig, weil Tesseract bei Zwei-Spalten-Layouts (linke/rechte
+// Bringt die OCR-Zeilen in echte Lesereihenfolge: von oben nach unten nach der
+// Oberkante (y0). Nötig, weil Tesseract bei Zwei-Spalten-Layouts (linke/rechte
 // Bubbles) die Blöcke spaltenweise liefern kann statt zeilenweise verschränkt.
 // Bei gleicher Höhe entscheidet die horizontale Position (links vor rechts).
 function sortiereNachHoehe(zeilen) {
   return (zeilen || []).slice().sort((a, b) => {
-    const ay = (a.y0 + a.y1) / 2;
-    const by = (b.y0 + b.y1) / 2;
-    if (ay !== by) return ay - by;
+    if (a.y0 !== b.y0) return a.y0 - b.y0;
     return (a.x0 + a.x1) / 2 - (b.x0 + b.x1) / 2;
   });
 }
 
-// Ordnet jede OCR-Zeile ihrer Seite zu.
+// Ordnet jede OCR-Zeile ihrer Seite zu — RANDBASIERT: eine Sprechblase gehört zu der
+// Seite, deren Rand sie berührt, unabhängig davon wie lang sie ist. Der Mittelpunkt
+// taugt nicht: eine lange Blase reicht mit ihrer Mitte bis zur Bildmitte und würde
+// sonst fälschlich als "Kontext" gelten.
 //   zeilen: [{ text, x0, x1 }] — x0/x1 = linke/rechte Kante der Zeile in Bildpixeln
 //   bildBreite: Breite des Screenshots in Pixeln
 //   meineSeite: 'rechts' | 'links' — wo die eigenen Nachrichten stehen
-//   totzoneAnteil: Anteil der Bildbreite in der Mitte, der als Kontext gilt (Standard 0.30)
-// Rückgabe: [{ text, seite: 'ich' | 'gegenueber' | 'kontext', rel }]
-function klassifiziereZeilen(zeilen, bildBreite, meineSeite, totzoneAnteil) {
-  const tot = typeof totzoneAnteil === 'number' ? totzoneAnteil : 0.3;
-  const untenGrenze = 0.5 - tot / 2;
-  const obenGrenze = 0.5 + tot / 2;
+//   mitteAnteil: wie ähnlich beide Randabstände sein müssen, damit eine Zeile als
+//                zentrierter Kontext (Datum, Systemzeile) gilt — Anteil der Bildbreite
+//                (Standard 0.15)
+// Rückgabe: [{ text, seite: 'ich' | 'gegenueber' | 'kontext' }]
+function klassifiziereZeilen(zeilen, bildBreite, meineSeite, mitteAnteil) {
+  const grenze = typeof mitteAnteil === 'number' ? mitteAnteil : 0.15;
   const seitig = meineSeite === 'links' ? 'links' : 'rechts';
+  const breite = bildBreite > 0 ? bildBreite : 1;
 
   return (zeilen || []).map((z) => {
-    const mitte = (z.x0 + z.x1) / 2;
-    const rel = bildBreite > 0 ? mitte / bildBreite : 0.5;
+    const abstandLinks = z.x0;               // Abstand der Zeile zum linken Bildrand
+    const abstandRechts = breite - z.x1;     // Abstand zum rechten Bildrand
+    const diff = Math.abs(abstandLinks - abstandRechts) / breite;
 
     let physisch;
-    if (rel < untenGrenze) physisch = 'links';
-    else if (rel > obenGrenze) physisch = 'rechts';
-    else physisch = 'mitte';
+    if (diff < grenze) physisch = 'mitte';   // beide Ränder ähnlich weit -> zentriert
+    else if (abstandLinks < abstandRechts) physisch = 'links';
+    else physisch = 'rechts';
 
     let seite;
     if (physisch === 'mitte') seite = 'kontext';
     else if (physisch === seitig) seite = 'ich';
     else seite = 'gegenueber';
 
-    return { text: z.text, seite, rel };
+    return { text: z.text, seite };
   });
 }
 
