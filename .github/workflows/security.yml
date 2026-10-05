@@ -1,0 +1,22 @@
+# Security-Scans aus dem zentralen Repo kvnflx/github.
+# Vorerst nur berichten (fail-on-cvss: 11). Zum Scharfschalten auf 7 setzen.
+
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Wöchentlich, damit neue CVEs auch ohne Commit auffallen
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-check:
+    uses: kvnflx/github/.github/workflows/dependency-check.yml@v1
+    with:
+      fail-on-cvss: 11
