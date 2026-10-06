@@ -1,0 +1,29 @@
+# Security-Scans aus dem zentralen Repo kvnflx/github.
+# Dependency-Check: Build scheitert ab CVSS 7. Funde ohne Fix stehen befristet in dependency-check-suppressions.xml.
+# SonarQube auf https://sonar.backsafe.de, Quality Gate vorerst nur berichtend.
+# Zum Scharfschalten beim Sonar-Job "with: quality-gate: true" ergänzen.
+
+name: Security
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  schedule:
+    # Wöchentlich, damit neue CVEs auch ohne Commit auffallen
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-check:
+    uses: kvnflx/github/.github/workflows/dependency-check.yml@v1
+    with:
+      fail-on-cvss: 7
+
+  sonarqube:
+    uses: kvnflx/github/.github/workflows/sonarqube.yml@v1
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
