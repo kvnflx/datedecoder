@@ -45,15 +45,22 @@ function chatverlauf(zielBytes) {
     'Was machst du am Wochenende?'
   ];
   const namen = ['Lisa', 'Ich'];
-  let out = '';
+  // Bytes laufend mitzählen statt Buffer.byteLength(out) pro Zeile: Das wäre
+  // quadratisch (2 MB ~ 30 s) und blockierte die Event-Loop des Testprozesses so
+  // lange, dass undici eine vom Keep-Alive-Timeout gerade geschlossene Verbindung
+  // für den nächsten Request wiederverwendete -> ECONNRESET.
+  const zeilen = [];
+  let bytes = 0;
   let i = 0;
-  while (Buffer.byteLength(out, 'utf8') < zielBytes) {
+  while (bytes < zielBytes) {
     const tag = 1 + (i % 28);
-    out += `[${String(tag).padStart(2, '0')}.01.2023, 10:${String(i % 60).padStart(2, '0')}] ` +
+    const zeile = `[${String(tag).padStart(2, '0')}.01.2023, 10:${String(i % 60).padStart(2, '0')}] ` +
       `${namen[i % 2]}: ${saetze[i % saetze.length]} #${i}\n`;
+    zeilen.push(zeile);
+    bytes += Buffer.byteLength(zeile, 'utf8');
     i++;
   }
-  return { text: out, anzahl: i };
+  return { text: zeilen.join(''), anzahl: i };
 }
 
 before(async () => {
