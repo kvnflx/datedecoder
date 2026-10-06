@@ -1,5 +1,5 @@
 # Security-Scans aus dem zentralen Repo kvnflx/github.
-# Dependency-Check vorerst nur berichten (fail-on-cvss: 7). Zum Scharfschalten auf 7 setzen.
+# Dependency-Check: Build scheitert ab CVSS 7. Funde ohne Fix stehen befristet in dependency-check-suppressions.xml.
 # SonarQube auf https://sonar.backsafe.de, Quality Gate vorerst nur berichtend.
 # Zum Scharfschalten beim Sonar-Job "with: quality-gate: true" ergänzen.
 
