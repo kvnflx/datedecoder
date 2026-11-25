@@ -62,7 +62,12 @@ Nach dem Deploy:
 - **Kostenbremse (`limits.js`):** Jede Anfrage kostet Geld, die Seite ist öffentlich.
   2 Anfragen pro IP und Tag, Tagesbudget 0,50 USD über alle Nutzer (Kevins Vorgabe
   2026-11-25: 0,50 EUR). Abgerechnet nach echten Tokens, vorher wird geschätzt und
-  reserviert. Fehlgeschlagene Anfragen geben das IP-Kontingent zurück.
+  reserviert (Eingabe mit 1,5 Byte/Token, Ausgabe voll mit `MAX_TOKENS` = 8.000).
+  Das IP-Kontingent gibt es nur zurück, wenn der Fehler bei uns oder beim Upstream
+  lag, nie bei Abbruch durch den Nutzer oder bei einer Ablehnung (sonst lässt sich
+  das Budget per Abbrechen leerziehen). Das IP-Limit stützt sich auf
+  `cf-connecting-ip` und ist am Origin vorbei fälschbar; der Schaden bleibt durch
+  das Tagesbudget gedeckelt.
   `MAX_CHAT_BYTES` (60 KB) muss so klein bleiben, dass ein maximal großer Export
   ins Tagesbudget passt; ein Test in `test/fehlerpfad.test.mjs` prüft das.
 - **Frontend-Stream-Format bleibt:** Der Server übersetzt Claude-Events in

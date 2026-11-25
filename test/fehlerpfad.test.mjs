@@ -366,6 +366,57 @@ describe('Kostenbremse', () => {
   });
 });
 
+describe('Rückgabe des IP-Kontingents', () => {
+  let rApp;
+
+  before(async () => {
+    rApp = await starteApp({ DAILY_REQUESTS_PER_IP: '2', DAILY_BUDGET_USD: '1000' });
+  });
+  after(() => stoppe(rApp));
+
+  async function okAnfrage(ip) {
+    upstream.modus = 'ok';
+    const r = await post(body(), { port: rApp.port, ip });
+    await r.text();
+    return r.status;
+  }
+
+  test('Abbruch durch den Nutzer gibt das Kontingent NICHT zurück', async () => {
+    // Sonst ließe sich das Tagesbudget leerziehen: starten, vor dem ersten Wort
+    // abbrechen, wiederholen, ohne je ans IP-Limit zu stoßen.
+    const ip = '198.51.100.1';
+    upstream.modus = 'haengt';
+    const ac = new AbortController();
+    const laeuft = fetch(url(rApp.port), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'cf-connecting-ip': ip },
+      body: body(),
+      signal: ac.signal
+    }).then((r) => r.text()).catch(() => {});
+    await new Promise((r) => setTimeout(r, 400));
+    ac.abort();
+    await laeuft;
+    await new Promise((r) => setTimeout(r, 300));
+
+    assert.equal(await okAnfrage(ip), 200, 'Die zweite Anfrage des Tages muss noch gehen');
+    assert.equal(await okAnfrage(ip), 429, 'Der Abbruch hat ein Kontingent verbraucht');
+  });
+
+  test('Ablehnung durch das Modell gibt das Kontingent NICHT zurück', async () => {
+    const ip = '198.51.100.2';
+    upstream.modus = 'refusal';
+    for (let i = 0; i < 2; i++) await (await post(body(), { port: rApp.port, ip })).text();
+    assert.equal(await okAnfrage(ip), 429);
+  });
+
+  test('hängender Upstream (Fehler auf unserer Seite) gibt das Kontingent zurück', async () => {
+    const ip = '198.51.100.3';
+    upstream.modus = 'haengt';
+    for (let i = 0; i < 3; i++) await (await post(body(), { port: rApp.port, ip })).text();
+    assert.equal(await okAnfrage(ip), 200, 'Ein Timeout beim Upstream darf dem Nutzer nichts wegnehmen');
+  });
+});
+
 describe('Standardwerte der Kostenbremse', () => {
   test('ein maximal großer Export passt mit den Standardwerten ins Tagesbudget', async () => {
     // Wird MAX_CHAT_BYTES größer als das Budget hergibt, scheitert jeder große

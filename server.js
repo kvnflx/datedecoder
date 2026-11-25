@@ -25,10 +25,12 @@ const MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'];
 // die API sie serverseitig auf einem passenden Modell. Haiku 5.5 kennt das nicht.
 const MIT_REFUSAL_FALLBACK = new Set(['claude-opus-5-5', 'claude-sonnet-5-5']);
 
-// Gemessen mit dem echten Prompt (2026-11-25, Opus 5.5): ~3.500 Ausgabe-Tokens
-// inklusive Denken, erstes Wort nach ~6 s. 16.000 lässt Luft und deckelt die Kosten.
+// Gemessen mit dem echten Prompt (2026-11-25, Opus 5.5): ~3.100 bis 3.600
+// Ausgabe-Tokens inklusive Denken, erstes Wort nach ~6 s. 8.000 lässt gut die
+// doppelte Luft. Der Wert wird vor jeder Anfrage voll im Tagesbudget reserviert,
+// höher setzen heißt also weniger Analysen pro Tag.
 const EFFORT = process.env.EFFORT || 'medium';
-const MAX_TOKENS = 16000;
+const MAX_TOKENS = 8000;
 
 // 3 Modelle x 30 s = 90 s. Das muss unter Cloudflares Proxy-Read-Timeout bleiben,
 // sonst kappt der Proxy die Verbindung mit einem 524, bevor der Server seinen
@@ -51,8 +53,6 @@ const MAX_GESAMT_BYTES = Number(process.env.MAX_GESAMT_BYTES) || 100 * 1024;
 // unter 0,50 EUR. Bei ~8,5 Cent pro Opus-Analyse reicht das für 5 bis 6 am Tag.
 const limitProIp = new TagesLimit({ max: Number(process.env.DAILY_REQUESTS_PER_IP) || 2 });
 const budget = new TagesBudget({ limitUsd: Number(process.env.DAILY_BUDGET_USD) || 0.5 });
-// Reserve für die Ausgabe bei der Budget-Schätzung (gemessen ~3.500, eher zu hoch angesetzt).
-const AUSGABE_RESERVE_TOKENS = 6000;
 
 const client = new Anthropic({
   apiKey: KEY,
@@ -144,11 +144,18 @@ function clientIp(req) {
   return req.socket?.remoteAddress || 'unbekannt';
 }
 
-/** Grobe Kostenschätzung vor der Anfrage. Deutsch mit Umlauten: ~2 Byte pro Token (gemessen). */
+/**
+ * Obergrenze der Kosten vor der Anfrage, damit das Tagesbudget nie überschritten
+ * wird. Gemessen per count_tokens (2026-11-25): System-Prompt 1,94 Byte/Token,
+ * WhatsApp-Export 1,66 Byte/Token. Mit 1,5 liegt die Schätzung sicher darüber.
+ * Die Ausgabe wird voll mit MAX_TOKENS angesetzt. Einzige Lücke: Springt der
+ * seltene Refusal-Fallback auf ein teureres Modell (Opus 4.8/5), kann die echte
+ * Rechnung ein paar Cent über der Reservierung liegen.
+ */
 function schaetzeKostenUsd(model, eingabeBytes) {
   return kostenUsd(model, {
-    input_tokens: Math.ceil(eingabeBytes / 2),
-    output_tokens: AUSGABE_RESERVE_TOKENS
+    input_tokens: Math.ceil(eingabeBytes / 1.5),
+    output_tokens: MAX_TOKENS
   });
 }
 
@@ -234,9 +241,19 @@ app.post('/api/chat', async (req, res) => {
   };
   // 'close' auf res, nicht auf req: req 'close' feuert bereits, sobald
   // express.json() den Body konsumiert hat — also lange vor einem echten Abbruch.
+  let clientWeg = false;
   res.on('close', () => {
+    if (!res.writableFinished) clientWeg = true;
     if (ac) ac.abort();
   });
+
+  // Das IP-Kontingent gibt es nur zurück, wenn der Fehler bei uns oder beim
+  // Upstream lag. Nie, wenn der Nutzer selbst abbricht: Sonst könnte jemand
+  // Anfragen starten, vor dem ersten Wort abbrechen und so das Tagesbudget
+  // leerziehen, ohne je an sein IP-Limit zu stoßen (Security-Review 2026-11-25).
+  const kontingentZurueck = () => {
+    if (!clientWeg) limitProIp.zurueckgeben(ip);
+  };
 
   const usage = {};
   let modell = MODELS[0];
@@ -279,12 +296,12 @@ app.post('/api/chat', async (req, res) => {
         console.warn(`Model ${model} -> HTTP ${info.status}: ${info.detail}`);
         // Ein ungültiger oder gesperrter Key gilt für jedes Modell der Kette.
         if (info.status === 401 || info.status === 403) break;
-        if (res.destroyed) break; // Nutzer ist schon weg
+        if (clientWeg) break; // Nutzer ist schon weg
       }
     }
 
     if (!stream) {
-      limitProIp.zurueckgeben(ip);
+      kontingentZurueck();
       budget.abrechnen(reservierung, 0);
       console.error('Alle Modelle fehlgeschlagen:', JSON.stringify(attempts));
 
@@ -365,8 +382,9 @@ app.post('/api/chat', async (req, res) => {
 
       if (stopReason === 'refusal') {
         // Auch der Fallback hat abgelehnt. Ohne Meldung stünde ein leerer Kasten da.
+        // Kein Kontingent zurück: Die Anfrage wurde abgerechnet, und gezielt
+        // provozierte Ablehnungen dürfen das IP-Limit nicht aushebeln.
         console.warn(`Anfrage abgelehnt (refusal), Modell ${modell}`);
-        if (!textGesendet) limitProIp.zurueckgeben(ip);
         schreibe({ error: { message: 'Diese Anfrage kann nicht analysiert werden. Formuliere sie anders.' } });
       } else if (stopReason === 'max_tokens') {
         schreibe({ hinweis: 'Die Antwort wurde an der Längengrenze abgeschnitten.' });
@@ -377,7 +395,7 @@ app.post('/api/chat', async (req, res) => {
       // sonst nur ein leeres HTTP 200. Ein Fehler-Event im Stream ist ehrlicher.
       console.error('Stream abgebrochen:', fehlerInfo(err).detail);
       if (!textGesendet) {
-        limitProIp.zurueckgeben(ip);
+        kontingentZurueck();
         schreibe({ error: { message: 'Die Analyse wurde unterbrochen. Versuch es nochmal.' } });
       } else {
         schreibe({ hinweis: 'Die Analyse wurde unterbrochen und ist unvollständig.' });
@@ -389,7 +407,7 @@ app.post('/api/chat', async (req, res) => {
     }
   } catch (err) {
     clearWatchdog();
-    limitProIp.zurueckgeben(ip);
+    if (!textGesendet) kontingentZurueck();
     console.error('Handler-Fehler:', err.message, err.cause?.code ?? '');
     if (!res.headersSent) {
       // res.json() überschreibt einen bereits gesetzten Content-Type nicht,
