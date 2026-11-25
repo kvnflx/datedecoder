@@ -1,39 +1,28 @@
 // Tests für den Umgang mit sehr langen Chatverläufen.
 //
-// Hintergrund: Das Kontextfenster ist pro Modell unterschiedlich — gemessen
-// 262.144 Tokens bei mistral-small-4, aber nur 131.072 bei llama-3.3-70b. Das
-// schwächste Glied bestimmt die Grenze, sonst scheitert der Fallback genau dann,
-// wenn er gebraucht wird.
+// Hintergrund: Seit dem Umstieg auf Claude (2026-11-25) ist das Kontextfenster
+// mit 1 Mio. Tokens kein Engpass mehr, wohl aber die Kosten: 60 KB Verlauf sind
+// rund 30.000 Tokens Eingabe. Gekürzt wird deshalb auf die neuesten
+// Nachrichten.
 //
-// Vorher: Ein 600-KB-Verlauf kam durchs 1-MB-Upload-Limit, jedes Modell
+// Vorher (NVIDIA): Ein 600-KB-Verlauf kam durchs 1-MB-Upload-Limit, jedes Modell
 // antwortete mit HTTP 400 (Kontext überschritten), und der Nutzer sah nach
 // 33,8 Sekunden "Server gerade nicht erreichbar" — eine irreführende Meldung
 // für ein Problem, das nichts mit der Erreichbarkeit zu tun hat.
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
-import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { starteMock, sendeStream, sendeFehler, freierPort, TEST_KEY } from './anthropic-mock.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SERVER_JS = join(HERE, '..', 'server.js');
 
 const upstream = { modus: 'ok', letzterPrompt: null };
 let mock;
-let mockPort;
 let app;
 let appPort;
-
-async function freierPort() {
-  const s = createServer();
-  s.listen(0, '127.0.0.1');
-  await once(s, 'listening');
-  const p = s.address().port;
-  await new Promise((r) => s.close(r));
-  return p;
-}
 
 /** Baut einen WhatsApp-artigen Verlauf der gewünschten Größe. */
 function chatverlauf(zielBytes) {
@@ -64,49 +53,31 @@ function chatverlauf(zielBytes) {
 }
 
 before(async () => {
-  mock = createServer((req, res) => {
-    let body = '';
-    req.on('data', (c) => (body += c));
-    req.on('end', () => {
-      try {
-        const j = JSON.parse(body);
-        upstream.letzterPrompt = j.messages[j.messages.length - 1].content;
-      } catch (e) {
-        upstream.letzterPrompt = null;
-      }
+  mock = await starteMock((anfrage, res) => {
+    const msgs = anfrage.body?.messages;
+    upstream.letzterPrompt = Array.isArray(msgs) ? msgs[msgs.length - 1].content : null;
 
-      if (upstream.modus === 'kontext') {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(
-          JSON.stringify({
-            error: {
-              message:
-                'You passed 340691 input tokens and requested 512 output tokens. ' +
-                "However, the model's context length is only 262144 tokens."
-            }
-          })
-        );
-        return;
-      }
-
-      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
-      res.write('data: {"choices":[{"delta":{"content":"Analyse"}}]}\n\n');
-      res.write('data: [DONE]\n\n');
-      res.end();
-    });
+    if (upstream.modus === 'kontext') {
+      return sendeFehler(
+        res,
+        400,
+        'invalid_request_error',
+        'prompt is too long: 1048577 tokens > 1048576 maximum'
+      );
+    }
+    return sendeStream(res, { model: anfrage.body?.model, texte: ['Analyse'] });
   });
-  mock.listen(0, '127.0.0.1');
-  await once(mock, 'listening');
-  mockPort = mock.address().port;
 
   appPort = await freierPort();
   app = spawn(process.execPath, [SERVER_JS], {
     env: {
       ...process.env,
       PORT: String(appPort),
-      NVIDIA_API_KEY: 'nvapi-testschluessel-nur-fuer-den-mock-0123456789',
-      NVIDIA_URL: `http://127.0.0.1:${mockPort}/v1/chat/completions`,
-      CONNECT_TIMEOUT_MS: '3000'
+      ANTHROPIC_API_KEY: TEST_KEY,
+      ANTHROPIC_BASE_URL: mock.url,
+      CONNECT_TIMEOUT_MS: '3000',
+      DAILY_REQUESTS_PER_IP: '1000',
+      DAILY_BUDGET_USD: '1000'
     },
     stdio: ['ignore', 'pipe', 'pipe']
   });
@@ -122,7 +93,7 @@ before(async () => {
 
 after(async () => {
   if (app && app.exitCode === null) app.kill();
-  if (mock) await new Promise((r) => mock.close(r));
+  if (mock) await mock.schliessen();
 });
 
 async function analysiere(text) {
@@ -169,9 +140,9 @@ describe('Lange Chatverläufe', () => {
     assert.equal(status, 200, 'Ein langer Verlauf darf nicht mehr in einem Fehler enden');
     const gesendet = Buffer.byteLength(upstream.letzterPrompt || '', 'utf8');
     assert.ok(
-      gesendet < 260 * 1024,
-      `Es gingen ${Math.round(gesendet / 1024)} KB ans Modell. Das schwächste Modell der ` +
-        'Kette (llama-3.3-70b) kann nur 131.072 Tokens — bei ~570 Tokens/KB sind das gut 220 KB.'
+      gesendet <= 60 * 1024,
+      `Es gingen ${Math.round(gesendet / 1024)} KB ans Modell. Ab 60 KB wird gekürzt, ` +
+        'sonst sprengt eine einzige Analyse mit Opus 5.5 das Tagesbudget.'
     );
   });
 

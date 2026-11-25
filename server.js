@@ -1,37 +1,72 @@
 const express = require('express');
 const path = require('path');
+const Anthropic = require('@anthropic-ai/sdk');
 const systemPrompt = require('./prompt');
+const { kostenUsd, sekundenBisMorgen, TagesLimit, TagesBudget } = require('./limits');
 
-const app = express();
-// Großzügig, damit auch ein mehrjähriger WhatsApp-Export (~1,6 MB) ankommt.
-// Zu lange Verläufe werden nicht abgelehnt, sondern gekürzt — siehe kuerzeVerlauf().
-app.use(express.json({ limit: '8mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+// Ohne diesen Check startet der Server klaglos und jeder Request endet als
+// nichtssagender 503. Das trim() fängt ein per Copy-Paste in die Coolify-UI
+// eingeschlepptes Newline ab, das sonst als "Invalid header value" scheitert.
+const KEY = (process.env.ANTHROPIC_API_KEY || '').trim();
+if (!KEY.startsWith('sk-ant-')) {
+  console.error('FATAL: ANTHROPIC_API_KEY fehlt oder hat unerwartetes Format (erwartet: sk-ant-...).');
+  process.exit(1);
+}
 
-// Die Kette verteilt sich bewusst über drei Anbieter. Am 2026-07-20 fielen
-// 'qwen/qwen3.5-122b-a10b' (410 Gone, End of Life) und 'mistralai/mistral-large'
-// (404, Function für den Account nicht mehr auflösbar) gleichzeitig aus — eine
-// Kette aus einer Hand fängt so etwas nicht auf. Alle drei sind unter echter Last
-// mit dem vollen System-Prompt gemessen; test/modelle.test.mjs prüft sie nach.
-const MODELS = [
-  'mistralai/mistral-small-4-119b-2603', // ~0,6 s bis zum ersten Token
-  'google/gemma-4-31b-it',
-  'meta/llama-3.3-70b-instruct' // langsam, aber in jedem Messlauf erreichbar
-];
+// Seit 2026-11-25 Claude statt NVIDIA NIM. NVIDIA hatte binnen vier Monaten jedes
+// Modell der Kette abgeschaltet (410 Gone, zuletzt google/gemma-4-31b-it am
+// 2026-11-24) und den Key entwertet (403). Die Kette bleibt bewusst bei einem
+// Anbieter: Anthropic kündigt Abschaltungen mit Vorlauf an, und jedes Modell hat
+// ein eigenes Rate-Limit, sodass Überlast beim einen auf das nächste ausweicht.
+// test/modelle.test.mjs prüft die Kette gegen die Models-API.
+const MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'];
 
-const NVIDIA_URL = process.env.NVIDIA_URL || 'https://integrate.api.nvidia.com/v1/chat/completions';
+// Lehnt ein Modell die Anfrage ab (HTTP 200 mit stop_reason "refusal"), wiederholt
+// die API sie serverseitig auf einem passenden Modell. Haiku 5.5 kennt das nicht.
+const MIT_REFUSAL_FALLBACK = new Set(['claude-opus-5-5', 'claude-sonnet-5-5']);
+
+// Gemessen mit dem echten Prompt (2026-11-25, Opus 5.5): ~3.500 Ausgabe-Tokens
+// inklusive Denken, erstes Wort nach ~6 s. 16.000 lässt Luft und deckelt die Kosten.
+const EFFORT = process.env.EFFORT || 'medium';
+const MAX_TOKENS = 16000;
+
 // 3 Modelle x 30 s = 90 s. Das muss unter Cloudflares Proxy-Read-Timeout bleiben,
 // sonst kappt der Proxy die Verbindung mit einem 524, bevor der Server seinen
 // eigenen 503 senden kann. test/modelle.test.mjs rechnet das Budget nach.
 const CONNECT_TIMEOUT_MS = Number(process.env.CONNECT_TIMEOUT_MS) || 30000;
 const IDLE_TIMEOUT_MS = Number(process.env.IDLE_TIMEOUT_MS) || 90000; // ohne neue Daten im Stream
 
-// Das schwächste Modell der Kette bestimmt die Grenze: gemessen 262.144 Tokens
-// bei mistral-small-4, aber nur 131.072 bei llama-3.3-70b. Bei ~570 Tokens/KB
-// bleiben nach System-Prompt und Antwortbudget gut 200 KB übrig. Würde man sich
-// am stärksten Modell orientieren, versagte der Fallback genau dann, wenn er
-// gebraucht wird.
-const MAX_CHAT_BYTES = Number(process.env.MAX_CHAT_BYTES) || 200 * 1024;
+// Längere Verläufe werden auf die neuesten Nachrichten gekürzt. Die Grenze ist
+// eine Kostenfrage, keine des Kontextfensters (1 Mio. Tokens): 60 KB sind etwa
+// 30.000 Tokens, gut 12 Cent Eingabe bei Opus 5.5, und immer noch die neuesten
+// rund 800 WhatsApp-Nachrichten. Mit den früheren 200 KB hätte eine einzige
+// Anfrage das Tagesbudget von 0,50 USD gesprengt.
+const MAX_CHAT_BYTES = Number(process.env.MAX_CHAT_BYTES) || 60 * 1024;
+// Obergrenze für den gesamten Gesprächsverlauf inklusive Nachfragen. Ohne sie
+// könnten 20 lange Nachrichten in einer einzigen Anfrage landen.
+const MAX_GESAMT_BYTES = Number(process.env.MAX_GESAMT_BYTES) || 100 * 1024;
+
+// Kostenbremse, siehe limits.js. Kevins Vorgabe (2026-11-25): 2 Anfragen pro IP
+// und Tag, höchstens 0,50 EUR am Tag. Das Budget rechnet in USD; 0,50 USD liegen
+// unter 0,50 EUR. Bei ~8,5 Cent pro Opus-Analyse reicht das für 5 bis 6 am Tag.
+const limitProIp = new TagesLimit({ max: Number(process.env.DAILY_REQUESTS_PER_IP) || 2 });
+const budget = new TagesBudget({ limitUsd: Number(process.env.DAILY_BUDGET_USD) || 0.5 });
+// Reserve für die Ausgabe bei der Budget-Schätzung (gemessen ~3.500, eher zu hoch angesetzt).
+const AUSGABE_RESERVE_TOKENS = 6000;
+
+const client = new Anthropic({
+  apiKey: KEY,
+  baseURL: process.env.ANTHROPIC_BASE_URL || undefined,
+  // Die Modell-Kette ist das Retry. SDK-Retries obendrauf würden das
+  // Timeout-Budget unter Cloudflares 100 Sekunden sprengen.
+  maxRetries: 0
+});
+
+const app = express();
+// Großzügig, damit auch ein mehrjähriger WhatsApp-Export (~1,6 MB) ankommt.
+// Zu lange Verläufe werden nicht abgelehnt, sondern gekürzt — siehe kuerzeVerlauf().
+app.use(express.json({ limit: '8mb' }));
+app.use(express.static(path.join(__dirname, 'public')));
 
 /** 12463 -> "12.463" — deterministisch, unabhängig von der ICU-Ausstattung des Images. */
 function zahl(n) {
@@ -75,25 +110,81 @@ function kuerzeVerlauf(text) {
   };
 }
 
+/**
+ * Lässt nur Text-Nachrichten von "user" und "assistant" durch. Eine eingeschleuste
+ * role "system" wäre bei Claude eine echte Operator-Anweisung mitten im Gespräch,
+ * die den System-Prompt aushebeln könnte. Liefert null bei ungültiger Eingabe.
+ */
+function bereinigeNachrichten(messages) {
+  if (!Array.isArray(messages) || messages.length === 0) return null;
+  for (const m of messages) {
+    if (!m || (m.role !== 'user' && m.role !== 'assistant') || typeof m.content !== 'string') return null;
+  }
+  // Leere Antworten (z. B. nach einem Abbruch) würde die API mit 400 ablehnen.
+  const sauber = messages
+    .filter((m) => m.content.trim())
+    .slice(-20)
+    .map((m) => ({ role: m.role, content: m.content }));
+  // Die API verlangt eine user-Nachricht am Anfang und (ohne Prefill) am Ende.
+  while (sauber.length && sauber[0].role !== 'user') sauber.shift();
+  if (!sauber.length || sauber[sauber.length - 1].role !== 'user') return null;
+  return sauber;
+}
+
+/**
+ * Client-IP hinter Cloudflare und Traefik. Wer am Proxy vorbei direkt den Origin
+ * anspricht, kann die Header fälschen und das IP-Limit umgehen. Dagegen hilft das
+ * Tagesbudget, das unabhängig von der IP greift.
+ */
+function clientIp(req) {
+  const cf = req.headers['cf-connecting-ip'];
+  if (typeof cf === 'string' && cf.trim()) return cf.trim();
+  const fwd = req.headers['x-forwarded-for'];
+  if (typeof fwd === 'string' && fwd.trim()) return fwd.split(',')[0].trim();
+  return req.socket?.remoteAddress || 'unbekannt';
+}
+
+/** Grobe Kostenschätzung vor der Anfrage. Deutsch mit Umlauten: ~2 Byte pro Token (gemessen). */
+function schaetzeKostenUsd(model, eingabeBytes) {
+  return kostenUsd(model, {
+    input_tokens: Math.ceil(eingabeBytes / 2),
+    output_tokens: AUSGABE_RESERVE_TOKENS
+  });
+}
+
 /** Erkennt, ob der Upstream wegen Überlänge abgelehnt hat — nicht wegen Ausfalls. */
 function istKontextFehler(status, detail) {
-  return status === 400 && /context length|context window|input tokens|too long|maximum context/i.test(detail);
+  return (
+    status === 400 &&
+    /prompt is too long|context length|context window|input tokens|too long|maximum context/i.test(detail)
+  );
+}
+
+/** Status und Klartext eines SDK-Fehlers fürs Log. Netzwerk- und Abbruchfehler haben keinen Status. */
+function fehlerInfo(err) {
+  if (err instanceof Anthropic.APIError && typeof err.status === 'number') {
+    return { status: err.status, detail: String(err.message).slice(0, 300) };
+  }
+  return { status: 0, detail: `${err.name}: ${err.message} (${err.cause?.code ?? '-'})` };
+}
+
+/** Übernimmt nur echte Zahlen; message_delta liefert manche Felder als null. */
+function mergeUsage(ziel, quelle) {
+  for (const [k, v] of Object.entries(quelle || {})) {
+    if (typeof v === 'number') ziel[k] = v;
+  }
 }
 
 app.post('/api/chat', async (req, res) => {
-  const { messages } = req.body;
-
-  if (!Array.isArray(messages) || messages.length === 0) {
-    return res.status(400).json({ error: 'Nachrichten-Array erforderlich.' });
+  const bereinigt = bereinigeNachrichten(req.body?.messages);
+  if (!bereinigt) {
+    return res.status(400).json({ error: 'Ungültiger Gesprächsverlauf.' });
   }
 
-  const trimmed = messages.slice(-20);
-
   // Überlange Einzelnachrichten (typisch: der importierte Verlauf) kürzen,
-  // statt sie erst ans Modell zu schicken und dort an der Kontextgrenze zu scheitern.
+  // statt sie erst ans Modell zu schicken und dort zu bezahlen.
   let hinweis = null;
-  const gekuerzt = trimmed.map((m) => {
-    if (typeof m.content !== 'string') return m;
+  const nachrichten = bereinigt.map((m) => {
     const k = kuerzeVerlauf(m.content);
     if (!k.gekuerzt) return m;
     hinweis =
@@ -104,14 +195,34 @@ app.post('/api/chat', async (req, res) => {
     return { ...m, content: k.text };
   });
 
-  const fullMessages = [{ role: 'system', content: systemPrompt }, ...gekuerzt];
+  const eingabeBytes =
+    Buffer.byteLength(systemPrompt, 'utf8') +
+    nachrichten.reduce((s, m) => s + Buffer.byteLength(m.content, 'utf8'), 0);
+  if (eingabeBytes > MAX_GESAMT_BYTES) {
+    return res.status(413).json({
+      error: 'Das Gespräch ist zu lang geworden. Starte eine neue Analyse mit dem aktuellen Verlauf.'
+    });
+  }
 
-  let activeReader = null;
-  // 'close' auf res, nicht auf req: req 'close' feuert bereits, sobald
-  // express.json() den Body konsumiert hat — also lange vor einem echten Abbruch.
-  res.on('close', () => {
-    if (activeReader) activeReader.cancel().catch(() => {});
-  });
+  // Erst das IP-Kontingent, dann das Budget. Wer heute schon dran war, soll keine
+  // Budget-Reservierung auslösen, die anderen den Platz wegnimmt.
+  const ip = clientIp(req);
+  if (!limitProIp.nehmen(ip)) {
+    res.setHeader('Retry-After', String(sekundenBisMorgen(Date.now())));
+    return res.status(429).json({
+      error: `Du hast heute schon ${limitProIp.max} Analysen gemacht. Morgen geht es weiter.`
+    });
+  }
+  const reservierung = budget.reservieren(schaetzeKostenUsd(MODELS[0], eingabeBytes));
+  if (!reservierung) {
+    limitProIp.zurueckgeben(ip);
+    const s = budget.stand();
+    console.warn(`Tagesbudget erschöpft: $${s.ausgegeben.toFixed(4)} ausgegeben, $${s.reserviert.toFixed(4)} reserviert`);
+    res.setHeader('Retry-After', String(sekundenBisMorgen(Date.now())));
+    return res.status(429).json({
+      error: 'Das Tageskontingent von DateDecoder ist aufgebraucht. Morgen geht es weiter.'
+    });
+  }
 
   let ac = null;
   let watchdog = null;
@@ -121,50 +232,60 @@ app.post('/api/chat', async (req, res) => {
       watchdog = null;
     }
   };
+  // 'close' auf res, nicht auf req: req 'close' feuert bereits, sobald
+  // express.json() den Body konsumiert hat — also lange vor einem echten Abbruch.
+  res.on('close', () => {
+    if (ac) ac.abort();
+  });
+
+  const usage = {};
+  let modell = MODELS[0];
+  let usageVollstaendig = false; // erst message_delta liefert die Ausgabe-Tokens
+  let textGesendet = false;
 
   try {
-    let response = null;
+    let stream = null;
     const attempts = [];
 
     for (const model of MODELS) {
-      response = null; // sonst zeigt die Variable nach einer Exception noch auf die Antwort des Vormodells
       ac = new AbortController();
       watchdog = setTimeout(() => ac.abort(), CONNECT_TIMEOUT_MS);
 
+      const params = {
+        model,
+        max_tokens: MAX_TOKENS,
+        system: systemPrompt,
+        messages: nachrichten,
+        output_config: { effort: EFFORT },
+        stream: true
+      };
+      if (MIT_REFUSAL_FALLBACK.has(model)) {
+        params.betas = ['server-side-fallback-2026-07-01'];
+        params.fallbacks = 'default';
+      }
+
       try {
-        const r = await fetch(NVIDIA_URL, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${process.env.NVIDIA_API_KEY}`
-          },
-          body: JSON.stringify({ model, messages: fullMessages, stream: true, max_tokens: 4096 }),
-          signal: ac.signal
-        });
-
+        stream = await client.beta.messages.create(params, { signal: ac.signal });
         clearWatchdog();
-
-        if (r.ok) {
-          response = r;
-          console.log(`Using model: ${model}`);
-          break;
-        }
-
-        // Der Fehler-Body ist die eigentliche Diagnose: NVIDIA nennt darin
-        // Modellname und Abschaltdatum im Klartext. Ohne ihn ist der nächste
-        // Ausfall wieder ein Blindflug.
-        const detail = (await r.text().catch(() => '<Body nicht lesbar>')).slice(0, 300);
-        attempts.push({ model, status: r.status, detail });
-        console.warn(`Model ${model} -> HTTP ${r.status}: ${detail}`);
+        modell = model;
+        console.log(`Using model: ${model}`);
+        break;
       } catch (err) {
         clearWatchdog();
-        const detail = `${err.message} (${err.cause?.code ?? '-'})`;
-        attempts.push({ model, status: 0, detail });
-        console.warn(`Model ${model} fetch failed: ${detail}`);
+        // Der Fehler-Body ist die eigentliche Diagnose (Modellname, Grund). Ohne
+        // ihn wäre der nächste Ausfall wieder ein Blindflug wie am 2026-07-20.
+        const info = fehlerInfo(err);
+        attempts.push({ model, ...info });
+        console.warn(`Model ${model} -> HTTP ${info.status}: ${info.detail}`);
+        // Ein ungültiger oder gesperrter Key gilt für jedes Modell der Kette.
+        if (info.status === 401 || info.status === 403) break;
+        if (res.destroyed) break; // Nutzer ist schon weg
       }
     }
 
-    if (!response) {
+    if (!stream) {
+      limitProIp.zurueckgeben(ip);
+      budget.abrechnen(reservierung, 0);
       console.error('Alle Modelle fehlgeschlagen:', JSON.stringify(attempts));
 
       if (attempts.length && attempts.every((a) => a.status === 429)) {
@@ -190,45 +311,76 @@ app.post('/api/chat', async (req, res) => {
     res.setHeader('X-Accel-Buffering', 'no'); // verhindert Puffern durch Reverse Proxies
     res.flushHeaders();
 
+    let lastWrite = Date.now();
+    const schreibe = (daten) => {
+      if (res.writableEnded || res.destroyed) return;
+      res.write(`data: ${JSON.stringify(daten)}\n\n`);
+      lastWrite = Date.now();
+    };
+
     // Transparenz vor der Analyse: Wurde gekürzt, muss der Nutzer das wissen —
     // sonst zieht er Schlüsse aus einer unvollständigen Grundlage.
-    if (hinweis) res.write(`data: ${JSON.stringify({ hinweis })}\n\n`);
+    if (hinweis) schreibe({ hinweis });
 
-    const reader = response.body.getReader();
-    activeReader = reader;
-    const decoder = new TextDecoder();
-
-    let lastData = Date.now();
-    let gesendet = 0;
     const armIdle = () => {
       clearWatchdog();
       watchdog = setTimeout(() => ac.abort(), IDLE_TIMEOUT_MS);
     };
     armIdle();
 
-    // Heartbeat nur, wenn wirklich nichts fließt — sonst könnte der Ping zwischen
-    // zwei Hälften einer fragmentierten SSE-Zeile landen und sie zerreißen.
+    // Opus denkt vor der ersten sichtbaren Zeile ein paar Sekunden. Der Ping hält
+    // die Verbindung durch Cloudflare offen und wird nur gesendet, wenn wirklich
+    // nichts fließt, damit er nie zwischen zwei Teile eines Events gerät.
     const heartbeat = setInterval(() => {
-      if (!res.writableEnded && Date.now() - lastData >= 15000) res.write(': ping\n\n');
+      if (!res.writableEnded && Date.now() - lastWrite >= 15000) {
+        res.write(': ping\n\n');
+        lastWrite = Date.now();
+      }
     }, 5000);
 
+    let stopReason = null;
     try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        res.write(decoder.decode(value, { stream: true }));
-        gesendet += value.length;
-        lastData = Date.now();
+      for await (const ev of stream) {
         armIdle();
+        if (ev.type === 'message_start') {
+          modell = ev.message.model || modell;
+          mergeUsage(usage, ev.message.usage);
+        } else if (ev.type === 'content_block_delta' && ev.delta.type === 'text_delta' && ev.delta.text) {
+          // Das Frontend versteht das Chunk-Format aus NVIDIA-Zeiten. Es bleibt,
+          // damit public/app.js und der Cloudflare-Cache unberührt bleiben.
+          schreibe({ choices: [{ delta: { content: ev.delta.text } }] });
+          textGesendet = true;
+        } else if (ev.type === 'message_delta') {
+          mergeUsage(usage, ev.usage);
+          usageVollstaendig = true;
+          if (ev.delta?.stop_reason) stopReason = ev.delta.stop_reason;
+        }
       }
+
+      // Das SDK beendet die Schleife bei einem Abbruch (Idle-Timeout, Nutzer weg)
+      // still, ohne Exception. Ohne diese Prüfung käme eine leere Analyse mit 200 an.
+      if (!stopReason) {
+        throw new Error(ac.signal.aborted ? 'Timeout oder Abbruch ohne Abschluss' : 'Stream ohne Abschluss beendet');
+      }
+
+      if (stopReason === 'refusal') {
+        // Auch der Fallback hat abgelehnt. Ohne Meldung stünde ein leerer Kasten da.
+        console.warn(`Anfrage abgelehnt (refusal), Modell ${modell}`);
+        if (!textGesendet) limitProIp.zurueckgeben(ip);
+        schreibe({ error: { message: 'Diese Anfrage kann nicht analysiert werden. Formuliere sie anders.' } });
+      } else if (stopReason === 'max_tokens') {
+        schreibe({ hinweis: 'Die Antwort wurde an der Längengrenze abgeschnitten.' });
+      }
+      if (!res.writableEnded && !res.destroyed) res.write('data: [DONE]\n\n');
     } catch (err) {
       // Bricht der Stream ab, bevor irgendetwas geflossen ist, sähe der Browser
       // sonst nur ein leeres HTTP 200. Ein Fehler-Event im Stream ist ehrlicher.
-      console.error('Stream abgebrochen:', err.message);
-      if (gesendet === 0 && !res.writableEnded) {
-        res.write(
-          `data: ${JSON.stringify({ error: { message: 'Die Analyse wurde unterbrochen. Versuch es nochmal.' } })}\n\n`
-        );
+      console.error('Stream abgebrochen:', fehlerInfo(err).detail);
+      if (!textGesendet) {
+        limitProIp.zurueckgeben(ip);
+        schreibe({ error: { message: 'Die Analyse wurde unterbrochen. Versuch es nochmal.' } });
+      } else {
+        schreibe({ hinweis: 'Die Analyse wurde unterbrochen und ist unvollständig.' });
       }
     } finally {
       clearInterval(heartbeat);
@@ -237,6 +389,7 @@ app.post('/api/chat', async (req, res) => {
     }
   } catch (err) {
     clearWatchdog();
+    limitProIp.zurueckgeben(ip);
     console.error('Handler-Fehler:', err.message, err.cause?.code ?? '');
     if (!res.headersSent) {
       // res.json() überschreibt einen bereits gesetzten Content-Type nicht,
@@ -245,6 +398,18 @@ app.post('/api/chat', async (req, res) => {
       res.status(503).json({ error: 'Server gerade nicht erreichbar. Versuch\'s in ein paar Sekunden nochmal.' });
     } else {
       res.end();
+    }
+  } finally {
+    // Ohne vollständige Usage (Abbruch mitten im Stream) zählt die Reservierung,
+    // lieber zu hoch als ein Loch im Budget. Ohne Stream ist schon abgerechnet.
+    const kosten = usageVollstaendig ? kostenUsd(modell, usage) : reservierung.betrag;
+    budget.abrechnen(reservierung, kosten);
+    if (usageVollstaendig) {
+      const s = budget.stand();
+      console.log(
+        `Analyse: ${modell}, in=${usage.input_tokens ?? '?'} out=${usage.output_tokens ?? '?'}, ` +
+          `$${kosten.toFixed(4)}, heute $${s.ausgegeben.toFixed(4)} von $${s.limit}`
+      );
     }
   }
 });
@@ -266,20 +431,12 @@ app.use((err, req, res, next) => {
   return res.status(500).json({ error: 'Serverfehler.' });
 });
 
-// Ohne diesen Check baut der Handler klaglos den Header "Bearer undefined" und
-// der Fehler endet als nichtssagender 503. Das trim() fängt ein per Copy-Paste
-// in die Coolify-UI eingeschlepptes Newline ab, das fetch sonst mit
-// "Invalid header value" quittiert.
-const KEY = (process.env.NVIDIA_API_KEY || '').trim();
-if (!KEY.startsWith('nvapi-')) {
-  console.error('FATAL: NVIDIA_API_KEY fehlt oder hat unerwartetes Format (erwartet: nvapi-...).');
-  process.exit(1);
-}
-process.env.NVIDIA_API_KEY = KEY;
-
 const PORT = process.env.PORT || 3000;
 const server = app.listen(PORT, () =>
-  console.log(`DateDecoder running on port ${PORT}, models: ${MODELS.join(', ')}`)
+  console.log(
+    `DateDecoder running on port ${PORT}, models: ${MODELS.join(', ')}, ` +
+      `Limit ${limitProIp.max}/IP/Tag, Budget $${budget.limitUsd}/Tag`
+  )
 );
 
 process.on('unhandledRejection', (err) => console.error('[unhandledRejection]', err));

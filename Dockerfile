@@ -1,4 +1,5 @@
-FROM node:20-alpine
+# Node 24 LTS: Das Anthropic-SDK unterstützt nur nicht-EOL-Versionen, Node 20 ist seit 2026-04 EOL.
+FROM node:24-alpine
 
 WORKDIR /app
 
@@ -9,7 +10,7 @@ ENV NODE_ENV=production
 COPY package*.json ./
 RUN npm ci --omit=dev
 
-COPY server.js prompt.js ./
+COPY server.js prompt.js limits.js ./
 COPY public/ public/
 
 EXPOSE 3000
