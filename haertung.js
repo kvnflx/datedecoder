@@ -105,19 +105,39 @@ function istCloudflareIp(ip) {
   return false;
 }
 
+// Nur von hier aus darf X-Forwarded-For kommen: Docker-Netze (Traefik) und
+// localhost. Steht der Container je ungeschützt im Netz, zählt der Header nicht.
+const vertrauteProxys = new net.BlockList();
+for (const cidr of (process.env.TRUSTED_PROXY_CIDRS ||
+  '10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.0/8,::1/128,fc00::/7').split(',')) {
+  const [adresse, laenge] = cidr.trim().split('/');
+  vertrauteProxys.addSubnet(adresse, Number(laenge), net.isIPv6(adresse) ? 'ipv6' : 'ipv4');
+}
+
+function istVertrauterProxy(ip) {
+  if (!ip) return false;
+  const roh = ip.startsWith('::ffff:') ? ip.slice(7) : ip;
+  if (net.isIPv4(roh)) return vertrauteProxys.check(roh, 'ipv4');
+  if (net.isIPv6(roh)) return vertrauteProxys.check(roh, 'ipv6');
+  return false;
+}
+
 /**
  * Die IP, die tatsächlich mit dem Reverse Proxy verbunden war. Traefik läuft in
  * Coolify ohne forwardedHeaders-Vertrauen (auf dem Server geprüft): Es verwirft
  * mitgeschickte X-Forwarded-For-Header und hängt den echten Peer an. Der letzte
- * Eintrag ist damit nicht fälschbar. Ohne Proxy (lokal, Tests) gilt der Socket.
+ * Eintrag ist damit nicht fälschbar, aber nur, wenn die Verbindung wirklich vom
+ * Proxy kommt. Sonst gilt der Socket.
  */
 function peerIp(req) {
+  const socket = req.socket?.remoteAddress || '';
+  if (!istVertrauterProxy(socket)) return socket;
   const fwd = req.headers['x-forwarded-for'];
   if (typeof fwd === 'string' && fwd.trim()) {
     const teile = fwd.split(',').map((s) => s.trim()).filter(Boolean);
     if (teile.length) return teile[teile.length - 1];
   }
-  return req.socket?.remoteAddress || '';
+  return socket;
 }
 
 function gleichSicher(a, b) {

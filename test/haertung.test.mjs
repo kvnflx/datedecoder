@@ -31,6 +31,15 @@ describe('Herkunft', () => {
     assert.equal(h.peerIp(req({}, '10.0.0.7')), '10.0.0.7');
   });
 
+  test('X-Forwarded-For zählt nur, wenn die Verbindung vom internen Proxy kommt', () => {
+    const vonAussen = req({ 'x-forwarded-for': '173.245.48.1' }, '203.0.113.50');
+    assert.equal(h.peerIp(vonAussen), '203.0.113.50', 'Direkt veröffentlichter Container darf XFF nicht glauben');
+    assert.equal(h.herkunft(vonAussen, '').ok, false);
+    const vonTraefik = req({ 'x-forwarded-for': '173.245.48.1' }, '10.0.1.5');
+    assert.equal(h.peerIp(vonTraefik), '173.245.48.1');
+    assert.equal(h.peerIp(req({ 'x-forwarded-for': '173.245.48.1' }, '::ffff:172.18.0.3')), '173.245.48.1');
+  });
+
   test('gefälschter erster XFF-Eintrag macht keine Cloudflare-Anfrage', () => {
     const r = h.herkunft(req({ 'x-forwarded-for': '173.245.48.1, 6.6.6.6' }), '');
     assert.equal(r.ok, false);
