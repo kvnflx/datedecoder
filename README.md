@@ -29,6 +29,11 @@ ANTHROPIC_API_KEY="sk-ant-..." npm start
 | `DAILY_REQUESTS_PER_IP` | Anfragen pro IP und Tag (Default: 2) | ❌ |
 | `DAILY_BUDGET_USD` | Tagesbudget über alle Nutzer in USD (Default: 0.5) | ❌ |
 | `EFFORT` | Denktiefe von Claude: low, medium, high (Default: medium) | ❌ |
+| `CLOUDFLARE_PFLICHT` | `/api/chat` nur über Cloudflare: erzwingen, melden, aus (Default: erzwingen in Produktion, sonst aus) | ❌ |
+| `ORIGIN_SECRET` | Geheimer Header `x-dd-origin`, den eine Cloudflare-Transform-Regel setzt | ❌ |
+| `TURNSTILE_SITEKEY` / `TURNSTILE_SECRET` | Turnstile vor jeder Analyse (nur beide zusammen) | ❌ |
+| `TURNSTILE_HOSTNAME` | Erwarteter Hostname in der Turnstile-Antwort | ❌ |
+| `MAX_PARALLEL` | Gleichzeitige Analysen insgesamt (Default: 4, pro IP immer 1) | ❌ |
 
 ## Deployment auf Coolify
 
@@ -46,6 +51,7 @@ ANTHROPIC_API_KEY="sk-ant-..." npm start
 ├── Dockerfile              # Node 24 Alpine Image
 ├── server.js               # Express + SSE Streaming Proxy zur Anthropic-API
 ├── limits.js               # Kostenbremse: Limit pro IP, Tagesbudget
+├── haertung.js             # Schutzschichten: CSP, Cloudflare-Herkunft, Turnstile
 ├── prompt.js               # Deutscher Dating-Master System-Prompt
 ├── package.json
 └── public/

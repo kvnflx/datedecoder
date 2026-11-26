@@ -7,7 +7,7 @@
   <link rel="icon" href="favicon.ico?v=1" sizes="any">
   <link rel="icon" href="favicon.svg?v=1" type="image/svg+xml">
   <title>DateDecoder — Nachrichten entschlüsseln</title>
-  <link rel="stylesheet" href="style.css?v=4">
+  <link rel="stylesheet" href="style.css?v=5">
 </head>
 <body>
   <div id="app" class="mode-input">
@@ -59,12 +59,16 @@
       </div>
     </div>
 
+    <!-- Turnstile: unsichtbar, erscheint nur, wenn Cloudflare nachfragt -->
+    <div id="turnstile" class="turnstile" aria-live="polite"></div>
+
     <input type="file" id="file-input" accept="image/*" multiple hidden>
     <input type="file" id="textfile-input" accept=".txt,.md,.csv,text/plain,text/markdown" hidden>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js" integrity="sha384-GJqSu7vueQ9qN0E9yLPb3Wtpd7OrgK8KmYzC8T1IysG1bcvxvIO4qtYR/D3A991F" crossorigin="anonymous"></script>
   <script src="seiten.js?v=4"></script>
-  <script src="app.js?v=4"></script>
+  <script src="turnstile.js?v=1"></script>
+  <script src="app.js?v=5"></script>
 </body>
 </html>

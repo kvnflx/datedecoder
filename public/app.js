@@ -79,9 +79,14 @@ async function streamResponse(messages, targetEl) {
   setInputsDisabled(true);
 
   try {
+    const headers = { 'Content-Type': 'application/json' };
+    // Frisches Turnstile-Token pro Anfrage (siehe turnstile.js); null, wenn aus.
+    const tsToken = await turnstileSchutz.token();
+    if (tsToken) headers['x-turnstile-token'] = tsToken;
+
     const response = await fetch('/api/chat', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ messages })
     });
 

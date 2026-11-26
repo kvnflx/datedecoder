@@ -4,14 +4,24 @@ FROM node:24-alpine
 WORKDIR /app
 
 # Ohne production-Modus liefert Expresss Default-Error-Handler bei Bodies über
-# 1 MB einen Stacktrace mit Container-Pfaden direkt an den Browser.
+# 1 MB einen Stacktrace mit Container-Pfaden direkt an den Browser. Außerdem
+# schaltet production die Cloudflare-Pflicht für /api/chat ein (server.js).
 ENV NODE_ENV=production
 
+# --ignore-scripts: Keine Abhängigkeit braucht Install-Skripte (2026-11-26
+# geprüft). So kann ein kompromittiertes Paket beim Build keinen Code ausführen.
 COPY package*.json ./
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 
-COPY server.js prompt.js limits.js ./
+# Dateien gehören root und sind für den App-Benutzer nur lesbar: Selbst ein
+# erfolgreicher Angriff auf den Prozess kann den eigenen Code nicht verändern.
+COPY server.js prompt.js limits.js haertung.js ./
 COPY public/ public/
+
+# Nicht als root laufen. Der Benutzer "node" ist im offiziellen Image angelegt.
+# Zusätzlich setzt Coolify: --read-only, --cap-drop=ALL, no-new-privileges,
+# Speicher- und Prozesslimit (siehe CLAUDE.md, Abschnitt Container).
+USER node
 
 EXPOSE 3000
 

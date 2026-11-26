@@ -66,12 +66,42 @@ Nach dem Deploy:
   Das IP-Kontingent gibt es nur zurück, wenn der Fehler bei uns oder beim Upstream
   lag, nie bei Abbruch durch den Nutzer oder bei einer Ablehnung (sonst lässt sich
   das Budget per Abbrechen leerziehen). Das IP-Limit stützt sich auf
-  `cf-connecting-ip` und ist am Origin vorbei fälschbar; der Schaden bleibt durch
-  das Tagesbudget gedeckelt.
+  `cf-connecting-ip`, das seit der Härtung nur noch bei nachgewiesener
+  Cloudflare-Herkunft zählt (siehe Abschnitt Sicherheit).
   `MAX_CHAT_BYTES` (60 KB) muss so klein bleiben, dass ein maximal großer Export
   ins Tagesbudget passt; ein Test in `test/fehlerpfad.test.mjs` prüft das.
 - **Frontend-Stream-Format bleibt:** Der Server übersetzt Claude-Events in
   `choices[0].delta.content` + `data: [DONE]`. So bleibt `public/app.js` unberührt.
+
+## Sicherheit (Härtung 2026-11-26, `haertung.js`)
+
+Reihenfolge in `/api/chat`, billig vor teuer: Herkunft → fremde Seite → JSON → Body
+(max. 3 MB, max. 100 Nachrichten) → Turnstile → Parallelität → IP-Kontingent → Budget.
+
+- **Nur über Cloudflare.** Die App ist auch direkt über 159.195.247.83 erreichbar.
+  `/api/chat` prüft den Peer = letzter `X-Forwarded-For`-Eintrag (Traefik in Coolify
+  läuft ohne `forwardedHeaders`-Vertrauen und setzt ihn selbst, auf dem Server geprüft)
+  gegen Cloudflares Netze und, wenn `ORIGIN_SECRET` gesetzt ist, den Header
+  `x-dd-origin` aus einer Cloudflare-Transform-Regel. `cf-connecting-ip` zählt nur
+  bei bestandener Prüfung. `CLOUDFLARE_PFLICHT`: `erzwingen` (Standard in Produktion),
+  `melden` (nur loggen, zum Prüfen nach Umstellungen), `aus` (lokal, Tests).
+  Tests simulieren den Cloudflare-Weg mit `x-forwarded-for: 173.245.48.1`.
+- **Turnstile** vor jeder Analyse, wenn `TURNSTILE_SITEKEY` + `TURNSTILE_SECRET`
+  gesetzt sind (nur beide zusammen). Unsichtbar, fail closed. Frontend: `public/turnstile.js`.
+  Lokal testbar mit Cloudflares Test-Schlüsseln (Site `1x00000000000000000000BB`,
+  Secret `1x0000000000000000000000000000000AA`).
+- **Header:** CSP mit Nonce pro Antwort (Cloudflare injiziert ein Inline-Skript), kein
+  `unsafe-inline`/`unsafe-eval`, nur `cdn.jsdelivr.net` (Tesseract) und
+  `challenges.cloudflare.com` (Turnstile) extern. Neue externe Quelle = CSP in
+  `haertung.js` anpassen, sonst bricht sie still. Dazu nosniff, DENY, no-referrer,
+  Permissions-Policy, COOP, CORP, kein `x-powered-by`, API mit `no-store`.
+- **System-Prompt:** nur Dating-Themen, Anweisungen im eingefügten Chat sind Material.
+- **Container:** läuft als `node`, `npm ci --ignore-scripts`. In Coolify zusätzlich
+  `--cap-drop=ALL`, `no-new-privileges`, `--read-only`, Speicher- und Prozesslimit.
+- **Nicht möglich:** `--disallow-code-generation-from-strings` scheitert an Express 4
+  (`depd` nutzt `new Function`), erst mit Express 5.
+- **Bewusst nicht gemacht (Kevins Entscheidung):** Server-Firewall nur für Cloudflare,
+  betrifft alle Apps auf netcup-rs2000; Docker umgeht `ufw`, Regel müsste in `DOCKER-USER`.
 
 ## Vorfall 2026-11-24: Wechsel von NVIDIA NIM zu Claude
 
@@ -120,6 +150,8 @@ regelmäßiger Job.
 
 - `server.js` — Express Server mit /api/chat Streaming-Proxy zur Anthropic-API
 - `limits.js` — Kostenbremse (Limit pro IP und Tag, Tagesbudget, Preistabelle)
+- `haertung.js` — Schutzschichten (Header/CSP, Cloudflare-Herkunft, Parallelität, Turnstile)
+- `public/turnstile.js` — Turnstile-Token pro Anfrage
 - `prompt.js` — Deutscher Dating-Master System-Prompt
 - `public/index.html` — Landing + Chat UI
 - `public/howto.html` — Anleitungen Chat-Export

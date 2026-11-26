@@ -671,3 +671,13 @@ body {
     width: 100%;
   }
 }
+
+/* Turnstile: Der Container hat keine Größe, solange Cloudflare nicht
+   nachfragt. Erscheint das Feld, liegt es mittig über der Eingabe. */
+.turnstile {
+  position: fixed;
+  left: 50%;
+  bottom: 88px;
+  transform: translateX(-50%);
+  z-index: 50;
+}

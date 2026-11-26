@@ -96,9 +96,17 @@ after(async () => {
 const url = (port = appPort) => `http://127.0.0.1:${port}/api/chat`;
 const body = (text = 'Testverlauf') => JSON.stringify({ messages: [{ role: 'user', content: text }] });
 
+/**
+ * Header wie hinter Cloudflare und Traefik: Traefik setzt X-Forwarded-For auf den
+ * echten Peer (hier eine Cloudflare-IP), Cloudflare setzt cf-connecting-ip. Nur
+ * dann vertraut der Server cf-connecting-ip als Client-IP.
+ */
+const CF_PEER = '173.245.48.1';
+const ueberCloudflare = (ip) => ({ 'x-forwarded-for': CF_PEER, 'cf-connecting-ip': ip });
+
 async function post(payload = body(), { port = appPort, ip } = {}) {
   const headers = { 'Content-Type': 'application/json' };
-  if (ip) headers['cf-connecting-ip'] = ip;
+  if (ip) Object.assign(headers, ueberCloudflare(ip));
   return fetch(url(port), { method: 'POST', headers, body: payload });
 }
 
@@ -389,7 +397,7 @@ describe('Rückgabe des IP-Kontingents', () => {
     const ac = new AbortController();
     const laeuft = fetch(url(rApp.port), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'cf-connecting-ip': ip },
+      headers: { 'Content-Type': 'application/json', ...ueberCloudflare(ip) },
       body: body(),
       signal: ac.signal
     }).then((r) => r.text()).catch(() => {});

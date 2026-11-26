@@ -3,6 +3,15 @@ const path = require('path');
 const Anthropic = require('@anthropic-ai/sdk');
 const systemPrompt = require('./prompt');
 const { kostenUsd, sekundenBisMorgen, TagesLimit, TagesBudget } = require('./limits');
+const {
+  sicherheitsHeader,
+  ladeCloudflareNetze,
+  herkunft,
+  clientIp,
+  istFremdeSeite,
+  Parallelitaet,
+  pruefeTurnstile
+} = require('./haertung');
 
 // Ohne diesen Check startet der Server klaglos und jeder Request endet als
 // nichtssagender 503. Das trim() fängt ein per Copy-Paste in die Coolify-UI
@@ -54,6 +63,34 @@ const MAX_GESAMT_BYTES = Number(process.env.MAX_GESAMT_BYTES) || 100 * 1024;
 const limitProIp = new TagesLimit({ max: Number(process.env.DAILY_REQUESTS_PER_IP) || 2 });
 const budget = new TagesBudget({ limitUsd: Number(process.env.DAILY_BUDGET_USD) || 0.5 });
 
+// /api/chat nur über Cloudflare (siehe haertung.js). Modi: "aus" (lokal, Tests),
+// "melden" (nur protokollieren, zum Prüfen nach einer Umstellung), "erzwingen".
+const CLOUDFLARE_PFLICHT =
+  process.env.CLOUDFLARE_PFLICHT || (process.env.NODE_ENV === 'production' ? 'erzwingen' : 'aus');
+if (!['aus', 'melden', 'erzwingen'].includes(CLOUDFLARE_PFLICHT)) {
+  console.error(`FATAL: CLOUDFLARE_PFLICHT="${CLOUDFLARE_PFLICHT}" ungültig (aus, melden, erzwingen).`);
+  process.exit(1);
+}
+// Geheimer Header, den nur unsere Cloudflare-Transform-Regel setzt (KeePass: datedecoder/Origin-Geheimnis).
+const ORIGIN_SECRET = (process.env.ORIGIN_SECRET || '').trim();
+
+// Turnstile: Cloudflare-Prüfung vor jeder Analyse, meist unsichtbar. Beide Werte
+// oder keiner, sonst wäre die Seite halb konfiguriert und jede Analyse scheitert.
+const TURNSTILE_SITEKEY = (process.env.TURNSTILE_SITEKEY || '').trim();
+const TURNSTILE_SECRET = (process.env.TURNSTILE_SECRET || '').trim();
+if (Boolean(TURNSTILE_SITEKEY) !== Boolean(TURNSTILE_SECRET)) {
+  console.error('FATAL: TURNSTILE_SITEKEY und TURNSTILE_SECRET nur zusammen setzen.');
+  process.exit(1);
+}
+const TURNSTILE_HOSTNAME = (process.env.TURNSTILE_HOSTNAME || '').trim();
+
+// Höchstens 4 Analysen gleichzeitig, pro IP eine. Schützt Speicher und verhindert,
+// dass parallele Anfragen gemeinsam Budget reservieren, bevor eine fertig ist.
+const parallel = new Parallelitaet({
+  global: Number(process.env.MAX_PARALLEL) || 4,
+  proIp: 1
+});
+
 const client = new Anthropic({
   apiKey: KEY,
   baseURL: process.env.ANTHROPIC_BASE_URL || undefined,
@@ -63,10 +100,41 @@ const client = new Anthropic({
 });
 
 const app = express();
-// Großzügig, damit auch ein mehrjähriger WhatsApp-Export (~1,6 MB) ankommt.
-// Zu lange Verläufe werden nicht abgelehnt, sondern gekürzt — siehe kuerzeVerlauf().
-app.use(express.json({ limit: '8mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+app.disable('x-powered-by');
+app.use(sicherheitsHeader);
+app.use(express.static(path.join(__dirname, 'public'), { dotfiles: 'deny' }));
+
+// Groß genug für einen mehrjährigen WhatsApp-Export (~1,6 MB), der danach gekürzt
+// wird (kuerzeVerlauf). Der Parser hängt nur an /api/chat und läuft erst nach den
+// Schutzprüfungen, damit abgewiesene Anfragen gar nicht erst geparst werden.
+const jsonParser = express.json({ limit: '3mb', strict: true });
+
+/**
+ * Schutzprüfungen vor jedem Byte Arbeit: Herkunft über Cloudflare, keine fremde
+ * Seite im Browser, nur JSON. Reihenfolge bewusst billig vor teuer.
+ */
+function apiSchutz(req, res, next) {
+  res.setHeader('Cache-Control', 'no-store');
+  const h = herkunft(req, ORIGIN_SECRET);
+  res.locals.herkunft = h;
+  if (CLOUDFLARE_PFLICHT !== 'aus' && (!h.ok || CLOUDFLARE_PFLICHT === 'melden')) {
+    console.warn(
+      `Herkunft: Peer ${h.peer} ${h.vonCloudflare ? 'ist Cloudflare' : 'ist NICHT Cloudflare'}, ` +
+        `Origin-Geheimnis ${h.geheimnisOk ? 'ok' : 'fehlt oder falsch'}` +
+        (h.ok ? '' : CLOUDFLARE_PFLICHT === 'erzwingen' ? ' -> abgelehnt' : ' -> würde abgelehnt')
+    );
+    if (!h.ok && CLOUDFLARE_PFLICHT === 'erzwingen') {
+      return res.status(403).json({ error: 'Zugriff nur über datedecoder.backsafe.de.' });
+    }
+  }
+  if (istFremdeSeite(req)) {
+    return res.status(403).json({ error: 'Anfragen von fremden Seiten sind nicht erlaubt.' });
+  }
+  if (!req.is('application/json')) {
+    return res.status(415).json({ error: 'Erwartet wird JSON.' });
+  }
+  next();
+}
 
 /** 12463 -> "12.463" — deterministisch, unabhängig von der ICU-Ausstattung des Images. */
 function zahl(n) {
@@ -116,7 +184,8 @@ function kuerzeVerlauf(text) {
  * die den System-Prompt aushebeln könnte. Liefert null bei ungültiger Eingabe.
  */
 function bereinigeNachrichten(messages) {
-  if (!Array.isArray(messages) || messages.length === 0) return null;
+  // Das Frontend schickt höchstens ein paar Dutzend; mehr ist kein echter Nutzer.
+  if (!Array.isArray(messages) || messages.length === 0 || messages.length > 100) return null;
   for (const m of messages) {
     if (!m || (m.role !== 'user' && m.role !== 'assistant') || typeof m.content !== 'string') return null;
   }
@@ -129,19 +198,6 @@ function bereinigeNachrichten(messages) {
   while (sauber.length && sauber[0].role !== 'user') sauber.shift();
   if (!sauber.length || sauber[sauber.length - 1].role !== 'user') return null;
   return sauber;
-}
-
-/**
- * Client-IP hinter Cloudflare und Traefik. Wer am Proxy vorbei direkt den Origin
- * anspricht, kann die Header fälschen und das IP-Limit umgehen. Dagegen hilft das
- * Tagesbudget, das unabhängig von der IP greift.
- */
-function clientIp(req) {
-  const cf = req.headers['cf-connecting-ip'];
-  if (typeof cf === 'string' && cf.trim()) return cf.trim();
-  const fwd = req.headers['x-forwarded-for'];
-  if (typeof fwd === 'string' && fwd.trim()) return fwd.split(',')[0].trim();
-  return req.socket?.remoteAddress || 'unbekannt';
 }
 
 /**
@@ -182,7 +238,13 @@ function mergeUsage(ziel, quelle) {
   }
 }
 
-app.post('/api/chat', async (req, res) => {
+// Das Frontend holt sich hier den öffentlichen Turnstile-Site-Key.
+app.get('/api/config', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ turnstileSiteKey: TURNSTILE_SITEKEY || null });
+});
+
+app.post('/api/chat', apiSchutz, jsonParser, async (req, res) => {
   const bereinigt = bereinigeNachrichten(req.body?.messages);
   if (!bereinigt) {
     return res.status(400).json({ error: 'Ungültiger Gesprächsverlauf.' });
@@ -211,10 +273,35 @@ app.post('/api/chat', async (req, res) => {
     });
   }
 
+  const ip = clientIp(req, res.locals.herkunft);
+
+  // Turnstile vor allen Kontingenten: Ein Bot ohne gültiges Token soll weder das
+  // IP-Limit noch das Budget berühren. Tokens sind einmalig, das Frontend holt
+  // für jede Anfrage ein neues.
+  if (TURNSTILE_SECRET) {
+    const t = await pruefeTurnstile({
+      token: req.headers['x-turnstile-token'],
+      secret: TURNSTILE_SECRET,
+      ip,
+      hostname: TURNSTILE_HOSTNAME,
+      verifyUrl: process.env.TURNSTILE_VERIFY_URL
+    });
+    if (!t.ok) {
+      console.warn(`Turnstile: ${t.grund}`);
+      return res.status(403).json({ error: 'Sicherheitsprüfung fehlgeschlagen. Lade die Seite neu und versuch es nochmal.' });
+    }
+  }
+
+  const freigeben = parallel.belegen(ip);
+  if (!freigeben) {
+    res.setHeader('Retry-After', '30');
+    return res.status(429).json({ error: 'Es läuft gerade schon eine Analyse. Warte kurz, bis sie fertig ist.' });
+  }
+
   // Erst das IP-Kontingent, dann das Budget. Wer heute schon dran war, soll keine
   // Budget-Reservierung auslösen, die anderen den Platz wegnimmt.
-  const ip = clientIp(req);
   if (!limitProIp.nehmen(ip)) {
+    freigeben();
     res.setHeader('Retry-After', String(sekundenBisMorgen(Date.now())));
     return res.status(429).json({
       error: `Du hast heute schon ${limitProIp.max} Analysen gemacht. Morgen geht es weiter.`
@@ -222,6 +309,7 @@ app.post('/api/chat', async (req, res) => {
   }
   const reservierung = budget.reservieren(schaetzeKostenUsd(MODELS[0], eingabeBytes));
   if (!reservierung) {
+    freigeben();
     limitProIp.zurueckgeben(ip);
     const s = budget.stand();
     console.warn(`Tagesbudget erschöpft: $${s.ausgegeben.toFixed(4)} ausgegeben, $${s.reserviert.toFixed(4)} reserviert`);
@@ -324,7 +412,7 @@ app.post('/api/chat', async (req, res) => {
     }
 
     res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Accel-Buffering', 'no'); // verhindert Puffern durch Reverse Proxies
     res.flushHeaders();
 
@@ -418,6 +506,7 @@ app.post('/api/chat', async (req, res) => {
       res.end();
     }
   } finally {
+    freigeben();
     // Ohne vollständige Usage (Abbruch mitten im Stream) zählt die Reservierung,
     // lieber zu hoch als ein Loch im Budget. Ohne Stream ist schon abgerechnet.
     const kosten = usageVollstaendig ? kostenUsd(modell, usage) : reservierung.betrag;
@@ -445,17 +534,28 @@ app.use((err, req, res, next) => {
   if (err instanceof SyntaxError && err.status === 400) {
     return res.status(400).json({ error: 'Ungültige Anfrage.' });
   }
+  if (err.status === 403 || err.status === 404) {
+    return res.status(err.status).json({ error: err.status === 403 ? 'Verboten.' : 'Nicht gefunden.' });
+  }
   console.error('Unbehandelter Fehler:', err);
   return res.status(500).json({ error: 'Serverfehler.' });
 });
+
+if (CLOUDFLARE_PFLICHT !== 'aus') ladeCloudflareNetze();
 
 const PORT = process.env.PORT || 3000;
 const server = app.listen(PORT, () =>
   console.log(
     `DateDecoder running on port ${PORT}, models: ${MODELS.join(', ')}, ` +
-      `Limit ${limitProIp.max}/IP/Tag, Budget $${budget.limitUsd}/Tag`
+      `Limit ${limitProIp.max}/IP/Tag, Budget $${budget.limitUsd}/Tag, ` +
+      `Cloudflare-Pflicht ${CLOUDFLARE_PFLICHT}${ORIGIN_SECRET ? ' mit Origin-Geheimnis' : ''}, ` +
+      `Turnstile ${TURNSTILE_SECRET ? 'an' : 'aus'}`
   )
 );
+// Langsame Clients (Slowloris) dürfen keine Verbindungen blockieren. Das gilt nur
+// fürs Empfangen der Anfrage, der Antwort-Stream darf länger laufen.
+server.headersTimeout = 20000;
+server.requestTimeout = 30000;
 
 process.on('unhandledRejection', (err) => console.error('[unhandledRejection]', err));
 process.on('uncaughtException', (err) => {
